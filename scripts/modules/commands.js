@@ -262,9 +262,6 @@ function registerCommands(programInstance) {
       const thresholdScore = parseFloat(options.threshold);
       const useResearch = options.research || false;
       
-      console.log(chalk.blue(`Analyzing task complexity from: ${tasksPath}`));
-      console.log(chalk.blue(`Output report will be saved to: ${outputPath}`));
-      
       if (useResearch) {
         console.log(chalk.blue('Using Perplexity AI for research-backed complexity analysis'));
       }
