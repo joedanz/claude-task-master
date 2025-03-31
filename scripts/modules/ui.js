@@ -1181,24 +1181,7 @@ function displayAnalysisProgress(progressData) {
       `${chalk.cyan('Processing')} ${spinner}`;
   }
   
-  // Only print the header once, after that we'll update the status line
-  if (!displayAnalysisProgress.initialized) {
-    displayAnalysisProgress.initialized = true;
-    
-    // Use boxen for the header
-    console.log(boxen(
-      chalk.bold(`🤖 Analyzing task complexity with Claude`) + '\n' +
-      chalk.dim(`Model: ${model || 'Unknown'} | Temperature: ${temperature.toFixed(1)}`),
-      { 
-        padding: { top: 1, bottom: 1, left: 2, right: 2 },
-        margin: { top: 0, bottom: 0 }, 
-        borderColor: 'blue', 
-        borderStyle: 'round' 
-      }
-    ));
-    
-    displayAnalysisProgress.statusLineStarted = true;
-  }
+
   
   // Clear the line and update the status
   process.stdout.write('\r\x1B[K');
@@ -1354,6 +1337,38 @@ async function confirmTaskOverwrite(tasksPath) {
   return answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
 }
 
+/**
+ * Display the start of complexity analysis with a boxen announcement
+ * @param {string} tasksPath - Path to the tasks file being analyzed
+ * @param {string} outputPath - Path where the report will be saved
+ * @param {boolean} useResearch - Whether Perplexity AI research is enabled
+ * @param {string} model - AI model name
+ * @param {number} temperature - AI temperature setting
+ */
+function displayComplexityAnalysisStart(tasksPath, outputPath, useResearch = false, model = CONFIG.model, temperature = CONFIG.temperature) {
+  // Create the message content with all information
+  let message = chalk.bold(`🤖 Analyzing Task Complexity`) + '\n' +
+    chalk.dim(`Model: ${model} | Temperature: ${temperature}`) + '\n\n' +
+    chalk.blue(`Input: ${tasksPath}`) + '\n' +
+    chalk.blue(`Output: ${outputPath}`);
+  
+  // Add research info if enabled
+  if (useResearch) {
+    message += '\n' + chalk.blue('Using Perplexity AI for research-backed analysis');
+  }
+  
+  // Display everything in a single boxen
+  console.log(boxen(
+    message,
+    { 
+      padding: { top: 1, bottom: 1, left: 2, right: 2 },
+      margin: { top: 0, bottom: 0 }, 
+      borderColor: 'blue', 
+      borderStyle: 'round' 
+    }
+  ));
+}
+
 // Export UI functions
 export {
   displayBanner,
@@ -1366,6 +1381,7 @@ export {
   getComplexityWithColor,
   displayNextTask,
   displayTaskById,
+  displayComplexityAnalysisStart,
   displayComplexityReport,
   displayAnalysisProgress,
   formatComplexitySummary,

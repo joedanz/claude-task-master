@@ -41,6 +41,7 @@ import {
   displayNextTask,
   displayTaskById,
   displayComplexityReport,
+  displayComplexityAnalysisStart,
   getStatusWithColor,
   confirmTaskOverwrite
 } from './ui.js';
@@ -464,9 +465,8 @@ function registerCommands(programInstance) {
       const thresholdScore = parseFloat(options.threshold);
       const useResearch = options.research || false;
       
-      if (useResearch) {
-        console.log(chalk.blue('Using Perplexity AI for research-backed complexity analysis'));
-      }
+      // Call the dedicated UI function to display complexity analysis start information
+      displayComplexityAnalysisStart(tasksPath, outputPath, useResearch, modelOverride || CONFIG.model, CONFIG.temperature);
       
       await analyzeTaskComplexity(options);
     });

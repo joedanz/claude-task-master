@@ -2328,6 +2328,47 @@ async function analyzeTaskComplexity(options) {
       // If research flag is set, use Perplexity first
       if (useResearch) {
         try {
+          // Register SIGINT handler to allow cancellation with Control-C
+          registerSigintHandler();
+          
+          // Start tracking elapsed time and update information display
+          const startTime = Date.now();
+          const totalTaskCount = tasksData.tasks.length;
+          
+          // IMPORTANT: Stop the loading indicator before showing the progress bar
+          stopLoadingIndicator(loadingIndicator);
+          
+          // Set up the progress data
+          const progressData = {
+            model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
+            contextTokens: 0, 
+            elapsed: 0,
+            temperature: CONFIG.temperature,
+            tasksAnalyzed: 0,
+            totalTasks: totalTaskCount,
+            percentComplete: 0,
+            maxTokens: CONFIG.maxTokens
+          };
+          
+          // Estimate context tokens (rough approximation - 1 token ~= 4 chars)
+          const estimatedContextTokens = Math.ceil(prompt.length / 4);
+          progressData.contextTokens = estimatedContextTokens;
+          
+          // Display initial progress before API call begins
+          displayAnalysisProgress(progressData);
+          
+          // Update progress display at regular intervals
+          streamingInterval = setInterval(() => {
+            // Update elapsed time
+            progressData.elapsed = (Date.now() - startTime) / 1000;
+            progressData.percentComplete = Math.min(90, (progressData.elapsed / 30) * 100); // Estimate based on typical 30s completion
+            
+            // Estimate number of tasks analyzed based on percentage
+            progressData.tasksAnalyzed = Math.floor((progressData.percentComplete / 100) * totalTaskCount);
+            
+            displayAnalysisProgress(progressData);
+          }, 100);
+          
           // Modify prompt to include more context for Perplexity and explicitly request JSON
           const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
 
@@ -2370,11 +2411,38 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           
           // Extract the response text
           fullResponse = result.choices[0].message.content;
+          console.log(chalk.green('Successfully generated complexity analysis with Perplexity AI'));
           
-          if (streamingInterval) clearInterval(streamingInterval);
+          // Clean up the interval
+          if (streamingInterval) {
+            clearInterval(streamingInterval);
+            streamingInterval = null;
+          }
+          
+          // Show completion
+          progressData.percentComplete = 100;
+          progressData.tasksAnalyzed = progressData.totalTasks;
+          progressData.completed = true;
+          displayAnalysisProgress(progressData);
+          
           stopLoadingIndicator(loadingIndicator);
+
+          // Log the first part of the response for debugging
+          console.debug(chalk.gray('Response first 200 chars:'));
+          console.debug(chalk.gray(fullResponse.substring(0, 200)));
         } catch (perplexityError) {
+          console.error(chalk.yellow('Falling back to Claude for complexity analysis...'));
+          console.error(chalk.gray('Perplexity error:'), perplexityError.message);
+
+          // Clean up
+          if (streamingInterval) {
+            clearInterval(streamingInterval);
+            streamingInterval = null;
+          }
+          cleanupSigintHandler();
+          
           // Continue to Claude as fallback
+          console.log(chalk.yellow('\nFalling back to Claude after Perplexity error: ' + perplexityError.message));
           await useClaudeForComplexityAnalysis();
         }
       } else {
@@ -2506,13 +2574,14 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         const codeBlockMatch = fullResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
         if (codeBlockMatch) {
           cleanedResponse = codeBlockMatch[1];
+          console.debug(chalk.blue("Extracted JSON from code block"));
         } else {
           // Look for a complete JSON array pattern
           // This regex looks for an array of objects starting with [ and ending with ]
           const jsonArrayMatch = fullResponse.match(/(\[\s*\{\s*"[^"]*"\s*:[\s\S]*\}\s*\])/);
           if (jsonArrayMatch) {
             cleanedResponse = jsonArrayMatch[1];
-            console.log(chalk.blue("Extracted JSON array pattern"));
+            console.log(chalk.blue("  Extracted JSON array pattern"));
           } else {
             // Try to find the start of a JSON array and capture to the end
             const jsonStartMatch = fullResponse.match(/(\[\s*\{[\s\S]*)/);
@@ -2527,11 +2596,19 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             }
           }
         }
+
+        // Log the cleaned response for debugging
+        console.debug(chalk.gray("Attempting to parse cleaned JSON..."));
+        console.debug(chalk.gray("Cleaned response (first 100 chars):"));
+        console.debug(chalk.gray(cleanedResponse.substring(0, 100)));
+        console.debug(chalk.gray("Last 100 chars:"));
+        console.debug(chalk.gray(cleanedResponse.substring(cleanedResponse.length - 100)));
         
         // More aggressive cleaning - strip any non-JSON content at the beginning or end
         const strictArrayMatch = cleanedResponse.match(/(\[\s*\{[\s\S]*\}\s*\])/);
         if (strictArrayMatch) {
           cleanedResponse = strictArrayMatch[1];
+          console.debug(chalk.blue("Applied strict JSON array extraction"));
         }
         
         try {
@@ -2647,6 +2724,45 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             
             // Use the same AI model as the original analysis
             if (useResearch) {
+              // Register SIGINT handler again to make sure it's active for this phase
+              registerSigintHandler();
+              
+              // Start tracking elapsed time for missing tasks
+              const missingTasksStartTime = Date.now();
+              
+              // Stop the loading indicator before showing progress
+              stopLoadingIndicator(missingTasksLoadingIndicator);
+              
+              // Set up progress tracking for missing tasks
+              const missingProgressData = {
+                model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
+                contextTokens: 0, 
+                elapsed: 0,
+                temperature: CONFIG.temperature,
+                tasksAnalyzed: 0,
+                totalTasks: missingTaskIds.length,
+                percentComplete: 0,
+                maxTokens: CONFIG.maxTokens
+              };
+              
+              // Estimate context tokens
+              const estimatedMissingContextTokens = Math.ceil(missingTasksPrompt.length / 4);
+              missingProgressData.contextTokens = estimatedMissingContextTokens;
+              
+              // Display initial progress
+              displayAnalysisProgress(missingProgressData);
+              
+              // Update progress display regularly
+              const missingTasksInterval = setInterval(() => {
+                missingProgressData.elapsed = (Date.now() - missingTasksStartTime) / 1000;
+                missingProgressData.percentComplete = Math.min(90, (missingProgressData.elapsed / 20) * 100); // Estimate ~20s completion
+                
+                // Estimate number of tasks analyzed based on percentage
+                missingProgressData.tasksAnalyzed = Math.floor((missingProgressData.percentComplete / 100) * missingTaskIds.length);
+                
+                displayAnalysisProgress(missingProgressData);
+              }, 100);
+              
               // Create the same research prompt but for missing tasks
               const missingTasksResearchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
 
@@ -2671,24 +2787,45 @@ Your response must be a clean JSON array only, following exactly this format:
 
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
 
-              const result = await perplexity.chat.completions.create({
-                model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
-                messages: [
-                  {
-                    role: "system", 
-                    content: "You are a technical analysis AI that only responds with clean, valid JSON. Never include explanatory text or markdown formatting in your response."
-                  },
-                  {
-                    role: "user",
-                    content: missingTasksResearchPrompt
-                  }
-                ],
-                temperature: CONFIG.temperature,
-                max_tokens: CONFIG.maxTokens,
-              });
-              
-              // Extract the response
-              missingAnalysisResponse = result.choices[0].message.content;
+              try {
+                const result = await perplexity.chat.completions.create({
+                  model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
+                  messages: [
+                    {
+                      role: "system", 
+                      content: "You are a technical analysis AI that only responds with clean, valid JSON. Never include explanatory text or markdown formatting in your response."
+                    },
+                    {
+                      role: "user",
+                      content: missingTasksResearchPrompt
+                    }
+                  ],
+                  temperature: CONFIG.temperature,
+                  max_tokens: CONFIG.maxTokens,
+                });
+                
+                // Extract the response
+                missingAnalysisResponse = result.choices[0].message.content;
+                
+                // Stop interval and show completion
+                clearInterval(missingTasksInterval);
+                missingProgressData.percentComplete = 100;
+                missingProgressData.tasksAnalyzed = missingProgressData.totalTasks;
+                missingProgressData.completed = true;
+                displayAnalysisProgress(missingProgressData);
+              } catch (error) {
+                // Clean up on error
+                if (missingTasksInterval) {
+                  clearInterval(missingTasksInterval);
+                }
+                throw error;
+              } finally {
+                // Always clean up SIGINT handler and interval
+                cleanupSigintHandler();
+                if (missingTasksInterval) {
+                  clearInterval(missingTasksInterval);
+                }
+              }
             } else {
               // Use Claude
               const stream = await anthropic.messages.create({
@@ -2724,7 +2861,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
               const codeBlockMatch = missingAnalysisResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
               if (codeBlockMatch) {
                 cleanedResponse = codeBlockMatch[1];
-                console.log(chalk.blue("Extracted JSON from code block for missing tasks"));
+                console.debug(chalk.blue("Extracted JSON from code block for missing tasks"));
               } else {
                 // Look for a complete JSON array pattern
                 const jsonArrayMatch = missingAnalysisResponse.match(/(\[\s*\{\s*"[^"]*"\s*:[\s\S]*\}\s*\])/);
