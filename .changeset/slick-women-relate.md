@@ -2,4 +2,4 @@
 "task-master-ai": patch
 ---
 
-Added changeset config #39
+Add license to repo
