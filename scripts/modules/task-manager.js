@@ -30,7 +30,9 @@ import {
   getComplexityWithColor,
   startLoadingIndicator,
   stopLoadingIndicator,
-  createProgressBar
+  createProgressBar,
+  displayAnalysisProgress,
+  formatComplexitySummary
 } from './ui.js';
 
 import {
@@ -279,10 +281,45 @@ Return only the updated tasks as a valid JSON array.`
           });
           
           // Process the stream
-          for await (const chunk of stream) {
-            if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-              responseText += chunk.delta.text;
+          let responseText = ''; // Define responseText variable
+          try {
+            let chunkCount = 0;
+            let isProcessing = true;
+            // Add a local check that gets set to false if SIGINT is received
+            const originalSigintHandler = sigintHandler;
+            
+            // Enhance the SIGINT handler to set isProcessing to false
+            sigintHandler = () => {
+              isProcessing = false;
+              
+              // Call original handler to do the rest of cleanup and exit
+              if (originalSigintHandler) originalSigintHandler();
+            };
+            
+            for await (const chunk of stream) {
+              // Check if we should stop processing (SIGINT received)
+              if (!isProcessing) {
+                break;
+              }
+              
+              if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+                responseText += chunk.delta.text;
+                chunkCount++;
+              }
             }
+            
+            // Restore original handler if we didn't get interrupted
+            if (isProcessing) {
+              sigintHandler = originalSigintHandler;
+            }
+          } catch (streamError) {
+            // Clean up the interval even if there's an error
+            if (streamingInterval) {
+              clearInterval(streamingInterval);
+              streamingInterval = null;
+            }
+            
+            throw streamError;
           }
           
           if (streamingInterval) clearInterval(streamingInterval);
@@ -1648,10 +1685,45 @@ async function addTask(tasksPath, prompt, dependencies = [], priority = 'medium'
     }, 500);
     
     // Process the stream
-    for await (const chunk of stream) {
-      if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-        fullResponse += chunk.delta.text;
+    console.log(chalk.yellow('[DEBUG] Starting to process Claude stream'));
+    try {
+      let chunkCount = 0;
+      let isProcessing = true;
+      // Add a local check that gets set to false if SIGINT is received
+      const originalSigintHandler = sigintHandler;
+      
+      // Enhance the SIGINT handler to set isProcessing to false
+      sigintHandler = () => {
+        isProcessing = false;
+        
+        // Call original handler to do the rest of cleanup and exit
+        if (originalSigintHandler) originalSigintHandler();
+      };
+      
+      for await (const chunk of stream) {
+        // Check if we should stop processing (SIGINT received)
+        if (!isProcessing) {
+          break;
+        }
+        
+        if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+          fullResponse += chunk.delta.text;
+          chunkCount++;
+        }
       }
+      
+      // Restore original handler if we didn't get interrupted
+      if (isProcessing) {
+        sigintHandler = originalSigintHandler;
+      }
+    } catch (streamError) {
+      // Clean up the interval even if there's an error
+      if (streamingInterval) {
+        clearInterval(streamingInterval);
+        streamingInterval = null;
+      }
+      
+      throw streamError;
     }
     
     if (streamingInterval) clearInterval(streamingInterval);
@@ -1737,21 +1809,66 @@ async function analyzeTaskComplexity(options) {
   const tasksPath = options.file || 'tasks/tasks.json';
   const outputPath = options.output || 'scripts/task-complexity-report.json';
   const modelOverride = options.model;
+  
+  // Define streamingInterval at the top level of the function so the handler can access it
+  let streamingInterval = null;
+  
+  // Add a debug listener at the process level to see if SIGINT is being received
+  const debugSignalListener = () => {};
+  process.on('SIGINT', debugSignalListener);
+  
+  // Set up SIGINT (Control-C) handler to cancel the operation gracefully
+  let sigintHandler;
+  const registerSigintHandler = () => {
+    // Only register if not already registered
+    if (!sigintHandler) {
+      sigintHandler = () => {
+        // Try to clear any intervals before exiting
+        if (streamingInterval) {
+          clearInterval(streamingInterval);
+          streamingInterval = null;
+        }
+        
+        // Clear any terminal state
+        process.stdout.write('\r\x1B[K'); // Clear current line
+        
+        console.log(chalk.yellow('\n\nAnalysis cancelled by user.'));
+        
+        // Make sure we remove our event listeners before exiting
+        cleanupSigintHandler();
+        
+        // Force exit after giving time for cleanup
+        setTimeout(() => {
+          process.exit(0);
+        }, 100);
+      };
+      process.on('SIGINT', sigintHandler);
+    }
+  };
+  
+  // Clean up function to remove the handler when done
+  const cleanupSigintHandler = () => {
+    if (sigintHandler) {
+      process.removeListener('SIGINT', sigintHandler);
+      sigintHandler = null;
+    }
+    
+    // Also remove the debug listener
+    process.removeListener('SIGINT', debugSignalListener);
+  };
   const thresholdScore = parseFloat(options.threshold || '5');
   const useResearch = options.research || false;
   
-  console.log(chalk.blue(`Analyzing task complexity and generating expansion recommendations...`));
+  // Initialize error tracking variable
+  let apiError = false;
   
   try {
     // Read tasks.json
-    console.log(chalk.blue(`Reading tasks from ${tasksPath}...`));
     const tasksData = readJSON(tasksPath);
     
     if (!tasksData || !tasksData.tasks || !Array.isArray(tasksData.tasks) || tasksData.tasks.length === 0) {
       throw new Error('No tasks found in the tasks file');
     }
-    
-    console.log(chalk.blue(`Found ${tasksData.tasks.length} tasks to analyze.`));
     
     // Prepare the prompt for the LLM
     const prompt = generateComplexityAnalysisPrompt(tasksData);
@@ -1760,14 +1877,11 @@ async function analyzeTaskComplexity(options) {
     const loadingIndicator = startLoadingIndicator('Calling AI to analyze task complexity...');
     
     let fullResponse = '';
-    let streamingInterval = null;
     
     try {
       // If research flag is set, use Perplexity first
       if (useResearch) {
         try {
-          console.log(chalk.blue('Using Perplexity AI for research-backed complexity analysis...'));
-          
           // Modify prompt to include more context for Perplexity and explicitly request JSON
           const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
 
@@ -1810,18 +1924,10 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           
           // Extract the response text
           fullResponse = result.choices[0].message.content;
-          console.log(chalk.green('Successfully generated complexity analysis with Perplexity AI'));
           
           if (streamingInterval) clearInterval(streamingInterval);
           stopLoadingIndicator(loadingIndicator);
-          
-          // ALWAYS log the first part of the response for debugging
-          console.log(chalk.gray('Response first 200 chars:'));
-          console.log(chalk.gray(fullResponse.substring(0, 200)));
         } catch (perplexityError) {
-          console.log(chalk.yellow('Falling back to Claude for complexity analysis...'));
-          console.log(chalk.gray('Perplexity error:'), perplexityError.message);
-          
           // Continue to Claude as fallback
           await useClaudeForComplexityAnalysis();
         }
@@ -1832,8 +1938,13 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
       
       // Helper function to use Claude for complexity analysis
       async function useClaudeForComplexityAnalysis() {
+        // Register SIGINT handler to allow cancellation with Control-C
+        registerSigintHandler();
+        
         // Call the LLM API with streaming
-        const stream = await anthropic.messages.create({
+        // Add try-catch for better error handling specifically for API call
+        try {
+          const stream = await anthropic.messages.create({
           max_tokens: CONFIG.maxTokens,
           model: modelOverride || CONFIG.model,
           temperature: CONFIG.temperature,
@@ -1842,13 +1953,54 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           stream: true
         });
         
-        // Update loading indicator to show streaming progress
-        let dotCount = 0;
+        // Stop the default loading indicator before showing our custom UI
+        stopLoadingIndicator(loadingIndicator);
+        
+        // Start tracking elapsed time and update information display
+        const startTime = Date.now();
+        const totalTaskCount = tasksData.tasks.length;
+        
+        // Set up the progress data
+        const progressData = {
+          model: modelOverride || CONFIG.model,
+          contextTokens: 0, // Will estimate based on prompt size
+          elapsed: 0,
+          temperature: CONFIG.temperature,
+          tasksAnalyzed: 0,
+          totalTasks: totalTaskCount,
+          percentComplete: 0,
+          maxTokens: CONFIG.maxTokens
+        };
+        
+        // Estimate context tokens (rough approximation - 1 token ~= 4 chars)
+        const estimatedContextTokens = Math.ceil(prompt.length / 4);
+        progressData.contextTokens = estimatedContextTokens;
+        
+        // Display initial progress before streaming begins
+        displayAnalysisProgress(progressData);
+        
+        // Update progress display at regular intervals
         streamingInterval = setInterval(() => {
-          readline.cursorTo(process.stdout, 0);
-          process.stdout.write(`Receiving streaming response from Claude${'.'.repeat(dotCount)}`);
-          dotCount = (dotCount + 1) % 4;
-        }, 500);
+          // Update elapsed time
+          progressData.elapsed = (Date.now() - startTime) / 1000;
+          
+          // Estimate completion percentage based on response length
+          if (fullResponse.length > 0) {
+            // Estimate based on expected response size (approx. 500 chars per task)
+            const expectedResponseSize = totalTaskCount * 500;
+            const estimatedProgress = Math.min(95, (fullResponse.length / expectedResponseSize) * 100);
+            progressData.percentComplete = estimatedProgress;
+            
+            // Estimate analyzed tasks based on JSON objects found
+            const taskMatches = fullResponse.match(/"taskId"\s*:\s*\d+/g);
+            if (taskMatches) {
+              progressData.tasksAnalyzed = Math.min(totalTaskCount, taskMatches.length);
+            }
+          }
+          
+          // Display the progress information
+          displayAnalysisProgress(progressData);
+        }, 100); // Update much more frequently for smoother animation
         
         // Process the stream
         for await (const chunk of stream) {
@@ -1857,14 +2009,48 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           }
         }
         
-        clearInterval(streamingInterval);
-        stopLoadingIndicator(loadingIndicator);
+        // Clean up the interval - stop updating progress
+        if (streamingInterval) {
+          clearInterval(streamingInterval);
+          streamingInterval = null;
+        }
         
-        console.log(chalk.green("Completed streaming response from Claude API!"));
+        // Show completion message immediately
+        progressData.percentComplete = 100;
+        progressData.elapsed = (Date.now() - startTime) / 1000;
+        progressData.tasksAnalyzed = progressData.totalTasks;
+        progressData.completed = true;
+        progressData.contextTokens = Math.max(progressData.contextTokens, estimatedContextTokens); // Ensure the final token count is accurate
+        displayAnalysisProgress(progressData);
+        
+        // Clear the line completely to remove any artifacts (after showing completion)
+        process.stdout.write('\r\x1B[K'); // Clear current line
+        process.stdout.write('\r'); // Move cursor to beginning of line
+        } catch (apiError) {
+          // Handle specific API errors here
+          if (streamingInterval) clearInterval(streamingInterval);
+          process.stdout.write('\r\x1B[K'); // Clear current line
+          
+          console.error(chalk.red(`\nAPI Error: ${apiError.message || 'Unknown error'}\n`));
+          console.log(chalk.yellow('This might be a temporary issue with the Claude API.'));
+          console.log(chalk.yellow('Please try again in a few moments or check your API key.'));
+          
+          // Rethrow to be caught by outer handler
+          throw apiError;
+        } finally {
+          // Clean up SIGINT handler
+          cleanupSigintHandler();
+          
+          // Ensure the interval is cleared
+          if (streamingInterval) {
+            clearInterval(streamingInterval);
+            streamingInterval = null;
+          }
+        }
       }
       
       // Parse the JSON response
-      console.log(chalk.blue(`Parsing complexity analysis...`));
+      console.log(chalk.blue(`  Parsing complexity analysis...`));
       let complexityAnalysis;
       try {
         // Clean up the response to ensure it's valid JSON
@@ -1874,7 +2060,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         const codeBlockMatch = fullResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
         if (codeBlockMatch) {
           cleanedResponse = codeBlockMatch[1];
-          console.log(chalk.blue("Extracted JSON from code block"));
         } else {
           // Look for a complete JSON array pattern
           // This regex looks for an array of objects starting with [ and ending with ]
@@ -1897,18 +2082,10 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           }
         }
         
-        // Log the cleaned response for debugging
-        console.log(chalk.gray("Attempting to parse cleaned JSON..."));
-        console.log(chalk.gray("Cleaned response (first 100 chars):"));
-        console.log(chalk.gray(cleanedResponse.substring(0, 100)));
-        console.log(chalk.gray("Last 100 chars:"));
-        console.log(chalk.gray(cleanedResponse.substring(cleanedResponse.length - 100)));
-        
         // More aggressive cleaning - strip any non-JSON content at the beginning or end
         const strictArrayMatch = cleanedResponse.match(/(\[\s*\{[\s\S]*\}\s*\])/);
         if (strictArrayMatch) {
           cleanedResponse = strictArrayMatch[1];
-          console.log(chalk.blue("Applied strict JSON array extraction"));
         }
         
         try {
@@ -2223,10 +2400,10 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
       };
       
       // Write the report to file
-      console.log(chalk.blue(`Writing complexity report to ${outputPath}...`));
+      console.log(chalk.blue(`  Writing complexity report to ${outputPath}...`));
       writeJSON(outputPath, report);
       
-      console.log(chalk.green(`Task complexity analysis complete. Report written to ${outputPath}`));
+      console.log(chalk.green(`  Task complexity analysis complete. Report written to ${outputPath}`));
       
       // Display a summary of findings
       const highComplexity = complexityAnalysis.filter(t => t.complexityScore >= 8).length;
@@ -2234,24 +2411,43 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
       const lowComplexity = complexityAnalysis.filter(t => t.complexityScore < 5).length;
       const totalAnalyzed = complexityAnalysis.length;
       
-      console.log('\nComplexity Analysis Summary:');
-      console.log('----------------------------');
-      console.log(`Tasks in input file: ${tasksData.tasks.length}`);
-      console.log(`Tasks successfully analyzed: ${totalAnalyzed}`);
-      console.log(`High complexity tasks: ${highComplexity}`);
-      console.log(`Medium complexity tasks: ${mediumComplexity}`);
-      console.log(`Low complexity tasks: ${lowComplexity}`);
-      console.log(`Sum verification: ${highComplexity + mediumComplexity + lowComplexity} (should equal ${totalAnalyzed})`);
-      console.log(`Research-backed analysis: ${useResearch ? 'Yes' : 'No'}`);
-      console.log(`\nSee ${outputPath} for the full report and expansion commands.`);
+      // Only show summary if we didn't encounter an API error
+      if (!apiError) {
+        // Create a summary object for formatting
+        const summary = {
+          totalTasks: tasksData.tasks.length,
+          analyzedTasks: totalAnalyzed,
+          highComplexityCount: highComplexity,
+          mediumComplexityCount: mediumComplexity,
+          lowComplexityCount: lowComplexity,
+          researchBacked: useResearch
+        };
+        
+        // Use the new formatting function from UI module
+        console.log(formatComplexitySummary(summary));
+      }
       
     } catch (error) {
       if (streamingInterval) clearInterval(streamingInterval);
       stopLoadingIndicator(loadingIndicator);
-      throw error;
+      
+      // Mark that we encountered an API error
+      apiError = true;
+      
+      // Display a user-friendly error message
+      console.error(chalk.red(`\nAPI Error: ${error.message || 'Unknown error'}\n`));
+      console.log(chalk.yellow('This might be a temporary issue with the Claude API.'));
+      console.log(chalk.yellow('Please try again in a few moments.'));
+      cleanupSigintHandler();
+      
+      // We'll continue with any tasks we might have analyzed before the error
     }
   } catch (error) {
     console.error(chalk.red(`Error analyzing task complexity: ${error.message}`));
+    
+    // Clean up SIGINT handler
+    cleanupSigintHandler();
+    
     process.exit(1);
   }
 }
