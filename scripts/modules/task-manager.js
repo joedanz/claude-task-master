@@ -74,6 +74,9 @@ try {
   log('warn', 'Research-backed features will not be available');
 }
 
+// Module-level sigintHandler declaration to be used across functions
+let sigintHandler = null;
+
 /**
  * Parse a PRD file and generate tasks
  * @param {string} prdPath - Path to the PRD file
@@ -2264,15 +2267,17 @@ async function analyzeTaskComplexity(options) {
   process.on('SIGINT', debugSignalListener);
   
   // Set up SIGINT (Control-C) handler to cancel the operation gracefully
-  let sigintHandler;
   const registerSigintHandler = () => {
     // Only register if not already registered
     if (!sigintHandler) {
       sigintHandler = () => {
+        log('debug', 'SIGINT handler executing for parsePRD');
+        
         // Try to clear any intervals before exiting
-        if (streamingInterval) {
-          clearInterval(streamingInterval);
-          streamingInterval = null;
+        if (progressInterval) {
+          clearInterval(progressInterval);
+          progressInterval = null;
+          log('debug', 'Cleared progress interval');
         }
         
         // Clear any terminal state
