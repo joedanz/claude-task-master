@@ -1369,6 +1369,602 @@ function displayComplexityAnalysisStart(tasksPath, outputPath, useResearch = fal
   ));
 }
 
+/**
+ * Display the start of PRD parsing with a boxen announcement
+ * @param {string} prdFilePath - Path to the PRD file being parsed
+ * @param {string} outputPath - Path where the tasks will be saved
+ * @param {number} numTasks - Number of tasks to generate
+ * @param {string} model - AI model name
+ * @param {number} temperature - AI temperature setting
+ */
+function displayPRDParsingStart(prdFilePath, outputPath, numTasks, model = CONFIG.model, temperature = CONFIG.temperature) {
+  // Create the message content with all information
+  let message = chalk.bold(`🤖 Parsing PRD and Generating Tasks`) + '\n' +
+    chalk.dim(`Model: ${model} | Temperature: ${temperature}`) + '\n\n' +
+    chalk.blue(`Input: ${prdFilePath}`) + '\n' +
+    chalk.blue(`Output: ${outputPath}`) + '\n' +
+    chalk.blue(`Tasks to Generate: ${numTasks}`);
+  
+  // Display everything in a single boxen
+  console.log(boxen(
+    message,
+    { 
+      padding: { top: 1, bottom: 1, left: 2, right: 2 },
+      margin: { top: 0, bottom: 0 }, 
+      borderColor: 'blue', // Changed from 'green' to 'blue' for consistency
+      borderStyle: 'round' 
+    }
+  ));
+}
+
+/**
+ * Display progress information for PRD parsing
+ * @param {Object} progressData - Progress data
+ * @param {number} progressData.percentComplete - Percentage complete (0-100)
+ * @param {number} progressData.elapsed - Elapsed time in seconds
+ * @param {number} progressData.contextTokens - Context tokens
+ * @param {number} progressData.estimatedTotalTokens - Estimated total tokens
+ * @param {number} progressData.promptTokens - Input tokens sent to API
+ * @param {number} progressData.completionTokens - Output tokens received from API
+ * @param {number} progressData.tasksGenerated - Number of tasks generated so far
+ * @param {number} progressData.totalTasks - Total number of tasks to generate
+ * @param {boolean} progressData.completed - Whether the operation is completed
+ * @param {string} progressData.message - Optional status message during thinking state
+ * @param {string} progressData.state - Optional processing state indicator
+ * @param {Object} progressData.taskInfo - Optional information about newly detected task
+ * @returns {void}
+ */
+function displayPRDParsingProgress(progressData) {
+  const {
+    percentComplete = 0,
+    elapsed = 0,
+    contextTokens = 0,
+    estimatedTotalTokens = 0,
+    promptTokens = 0,
+    completionTokens = 0,
+    tasksGenerated = 0,
+    totalTasks = 0,
+    completed = false,
+    message,
+    state,
+    taskInfo,
+    microProgress = false // Flag to detect micro-progress updates
+  } = progressData;
+
+  // Log incoming data for debugging
+  log('debug', `[UI] displayPRDParsingProgress called with: tasksGenerated=${tasksGenerated}, totalTasks=${totalTasks}, microProgress=${microProgress}`);
+  if (taskInfo) {
+    log('debug', `[UI] taskInfo received: ${JSON.stringify(taskInfo)}`);
+  }
+
+  // Format the elapsed time
+  const timeDisplay = formatElapsedTime(elapsed);
+  
+  // Use static variables to track display state
+  if (displayPRDParsingProgress.initialized === undefined) {
+    displayPRDParsingProgress.initialized = false;
+    displayPRDParsingProgress.lastUpdate = Date.now();
+    displayPRDParsingProgress.statusLineStarted = false;
+    displayPRDParsingProgress.detectedTasks = new Map(); // Track tasks we've detected
+    displayPRDParsingProgress.lastTaskId = 0; // Track last task ID we've displayed
+    displayPRDParsingProgress.lastPercentComplete = 0; // Track last percentage shown
+    displayPRDParsingProgress.lastTokenCount = 0; // Track last token count
+    displayPRDParsingProgress.actualTaskCount = 0; // Track actual number of tasks generated
+    displayPRDParsingProgress.lastThinkingMessage = ''; // Track the last thinking message
+    log('debug', `[UI] displayPRDParsingProgress initialized static variables`);
+  }
+  
+  // For micro-progress updates, we only update the percentage without
+  // changing other elements like task counts or thinking state
+  if (microProgress && !completed) {
+    // Still log token information for debugging
+    log('debug', `[UI] Token info: promptTokens=${promptTokens}, completionTokens=${completionTokens}`);
+    
+    // Create progress bar (20 characters wide)
+    const progressBarWidth = 20;
+    
+    // Use the micro-progress adjusted percentage
+    let smoothPercentComplete = percentComplete;
+    
+    // Update our percentage tracking but keep other state unchanged
+    displayPRDParsingProgress.lastPercentComplete = smoothPercentComplete;
+    
+    // Format percentage for display
+    const percentText = `${Math.round(smoothPercentComplete)}%`;
+    const percentTextLength = percentText.length;
+    
+    // Use the latest token counts
+    const tokenDisplay = `${promptTokens}/${completionTokens}`;
+    
+    // Calculate position for centered percentage
+    const halfBarWidth = Math.floor(progressBarWidth / 2);
+    const percentStartPos = Math.max(0, halfBarWidth - Math.floor(percentTextLength / 2));
+    const percentEndPos = percentStartPos + percentTextLength - 1;
+    
+    // Calculate how many filled and empty chars to draw - use actual percentage
+    const rawFilledChars = Math.floor((smoothPercentComplete / 100) * progressBarWidth);
+    
+    // Create the progress bar with centered percentage that accurately represents the percentage
+    let progressBar = '';
+    let filledCount = 0;
+    let emptyCount = 0;
+    let textAdded = false;
+    
+    for (let i = 0; i < progressBarWidth; i++) {
+      // Determine if this position should be filled based on percentage
+      const shouldBeFilled = i < rawFilledChars;
+      
+      // If we're in the percentage text range
+      if (i >= percentStartPos && i <= percentEndPos) {
+        // Only add the text once at the starting position
+        if (i === percentStartPos) {
+          progressBar += chalk.bold.white(percentText);
+          i = percentEndPos; // Skip ahead
+          textAdded = true;
+          
+          // Track how many filled and empty positions were "consumed" by the text
+          const textPositionsCount = percentTextLength;
+          const filledPositionsInText = Math.min(rawFilledChars - percentStartPos, textPositionsCount);
+          const emptyPositionsInText = textPositionsCount - filledPositionsInText;
+          
+          filledCount += filledPositionsInText;
+          emptyCount += emptyPositionsInText;
+        }
+      } else if (shouldBeFilled) {
+        // This position should be filled
+        progressBar += chalk.cyan('█');
+        filledCount++;
+      } else {
+        // This position should be empty
+        progressBar += chalk.gray('░');
+        emptyCount++;
+      }
+    }
+    
+    // Log progress bar composition for debugging
+    log('debug', `[UI] Progress bar: ${smoothPercentComplete.toFixed(1)}%, filled=${filledCount}, empty=${emptyCount}, text added=${textAdded}`);
+    
+    // Use spinner from ora
+    const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    
+    // Increment the counter for animation
+    if (!displayPRDParsingProgress.frameCounter) {
+      displayPRDParsingProgress.frameCounter = 0;
+    }
+    if (!displayPRDParsingProgress.updateToggle) {
+      displayPRDParsingProgress.updateToggle = false;
+    }
+    
+    // Toggle between updating and not updating to halve the speed
+    displayPRDParsingProgress.updateToggle = !displayPRDParsingProgress.updateToggle;
+    
+    // Only update every other call to make animation half as fast
+    if (displayPRDParsingProgress.updateToggle) {
+      displayPRDParsingProgress.frameCounter = (displayPRDParsingProgress.frameCounter + 1) % spinnerFrames.length;
+    }
+    
+    const spinner = chalk.cyan(spinnerFrames[displayPRDParsingProgress.frameCounter]);
+    
+    // For a micro-progress update, get the last message we displayed
+    const thinkingMessage = displayPRDParsingProgress.lastThinkingMessage || 'Processing...';
+    
+    // Construct the progress line efficiently for micro-updates
+    const displayedTasks = displayPRDParsingProgress.actualTaskCount;
+    const progressLine = `  ⏱ ${timeDisplay} | Tasks: ${displayedTasks}/${totalTasks} | Tokens (I/O): ${tokenDisplay} | ${progressBar} | ${thinkingMessage} ${spinner}`;
+    
+    // Only output the line if status line has been started
+    if (displayPRDParsingProgress.statusLineStarted) {
+      // Emit the current status line, replacing the previous one
+      process.stdout.write(`\r${progressLine}`);
+    }
+    
+    log('debug', `[UI] Progress update: ${displayPRDParsingProgress.lastPercentComplete.toFixed(1)}% → ${smoothPercentComplete.toFixed(1)}%`);
+    
+    // Early return for micro-progress updates after updating the progress bar
+    return;
+  }
+  
+  // For non-micro-progress updates, continue with the full update logic
+  
+  // Track task info regardless of microProgress flag
+  if (taskInfo && typeof taskInfo === 'object' && taskInfo.taskId) {
+    log('debug', `[UI] Processing taskInfo with ID=${taskInfo.taskId}, title="${taskInfo.title?.substring(0, 20)}..."`);
+    
+    // Only count each task once by tracking the unique task IDs
+    if (!displayPRDParsingProgress.detectedTasks.has(taskInfo.taskId)) {
+      // If taskInfo has a taskCount, use that directly
+      if (taskInfo.taskCount) {
+        displayPRDParsingProgress.actualTaskCount = taskInfo.taskCount;
+      } else {
+        displayPRDParsingProgress.actualTaskCount += 1;
+      }
+      log('debug', `[UI] New task ID ${taskInfo.taskId} detected, actualTaskCount now: ${displayPRDParsingProgress.actualTaskCount}`);
+    } else {
+      // Even for tasks we've seen, update taskCount if available
+      if (taskInfo.taskCount) {
+        displayPRDParsingProgress.actualTaskCount = taskInfo.taskCount;
+      }
+      log('debug', `[UI] Task ID ${taskInfo.taskId} already seen, not incrementing counter`);
+    }
+    
+    // Store task info in our tracking map
+    displayPRDParsingProgress.detectedTasks.set(taskInfo.taskId, {
+      title: taskInfo.title,
+      priority: taskInfo.priority || 'medium',
+      description: taskInfo.description || '',
+      detected: new Date(),
+      taskCount: taskInfo.taskCount
+    });
+  } else if (microProgress) {
+    log('debug', `[UI] Micro-progress update, skipping task count update`);
+  } else if (taskInfo) {
+    log('debug', `[UI] Invalid taskInfo format or missing taskId: ${JSON.stringify(taskInfo)}`);
+  }
+  
+  // Create progress bar (20 characters wide)
+  const progressBarWidth = 20;
+  
+  // Prevent progress bar jumps by ensuring gradual progression
+  // This is key to preventing the 19% to 100% jump
+  let smoothPercentComplete = percentComplete;
+  
+  if (completed) {
+    // Only show 100% when actually complete
+    smoothPercentComplete = 100;
+  } else {
+    // Ensure progress never goes backward by taking the maximum
+    // of current percentage and last displayed percentage
+    smoothPercentComplete = Math.max(
+      displayPRDParsingProgress.lastPercentComplete || 0,
+      percentComplete
+    );
+    
+    // Update our tracking for reference only
+    displayPRDParsingProgress.lastPercentComplete = smoothPercentComplete;
+    displayPRDParsingProgress.lastUpdate = Date.now();
+  }
+  
+  // Format percentage for display
+  const percentText = `${Math.round(smoothPercentComplete)}%`;
+  const percentTextLength = percentText.length;
+  
+  // Use actual token count directly - no smoothing
+  const displayTokens = contextTokens;
+  
+  // Use actual token display with input/output format
+  const tokenDisplay = `${promptTokens}/${completionTokens}`;
+  
+  // Log token information for debugging
+  log('debug', `[UI] Token info: promptTokens=${promptTokens}, completionTokens=${completionTokens}`);
+  
+  // Update our tracking for reference only
+  displayPRDParsingProgress.lastTokenCount = contextTokens;
+  
+  // For displaying task count, prioritize different sources
+  let displayedTasks;
+  if (completed) {
+    // If completed, show total tasks
+    displayedTasks = totalTasks;
+  } else if (taskInfo && taskInfo.taskCount) {
+    // If we have taskInfo with taskCount, use that (regardless of microProgress)
+    displayedTasks = taskInfo.taskCount;
+    // Update our tracking for consistent display
+    displayPRDParsingProgress.actualTaskCount = taskInfo.taskCount;
+  } else if (tasksGenerated > 0) {
+    // Use provided tasksGenerated if available
+    displayedTasks = tasksGenerated;
+    // Update our tracking for consistent display
+    displayPRDParsingProgress.actualTaskCount = tasksGenerated;
+  } else {
+    // Otherwise use our tracked count
+    displayedTasks = displayPRDParsingProgress.actualTaskCount;
+  }
+  
+  // Calculate position for centered percentage
+  const halfBarWidth = Math.floor(progressBarWidth / 2);
+  const percentStartPos = Math.max(0, halfBarWidth - Math.floor(percentTextLength / 2));
+  const percentEndPos = percentStartPos + percentTextLength - 1;
+  
+  // Calculate how many filled and empty chars to draw - use actual percentage
+  const rawFilledChars = Math.floor((smoothPercentComplete / 100) * progressBarWidth);
+  
+  // Create the progress bar with centered percentage that accurately represents the percentage
+  let progressBar = '';
+  let filledCount = 0;
+  let emptyCount = 0;
+  let textAdded = false;
+  
+  for (let i = 0; i < progressBarWidth; i++) {
+    // Determine if this position should be filled based on percentage
+    const shouldBeFilled = i < rawFilledChars;
+    
+    // If we're in the percentage text range
+    if (i >= percentStartPos && i <= percentEndPos) {
+      // Only add the text once at the starting position
+      if (i === percentStartPos) {
+        progressBar += chalk.bold.white(percentText);
+        i = percentEndPos; // Skip ahead
+        textAdded = true;
+        
+        // Track how many filled and empty positions were "consumed" by the text
+        const textPositionsCount = percentTextLength;
+        const filledPositionsInText = Math.min(rawFilledChars - percentStartPos, textPositionsCount);
+        const emptyPositionsInText = textPositionsCount - filledPositionsInText;
+        
+        filledCount += filledPositionsInText;
+        emptyCount += emptyPositionsInText;
+      }
+    } else if (shouldBeFilled) {
+      // This position should be filled
+      progressBar += chalk.cyan('█');
+      filledCount++;
+    } else {
+      // This position should be empty
+      progressBar += chalk.gray('░');
+      emptyCount++;
+    }
+  }
+  
+  // Log progress bar composition for debugging
+  log('debug', `[UI] Progress bar: ${smoothPercentComplete.toFixed(1)}%, filled=${filledCount}, empty=${emptyCount}, text added=${textAdded}`);
+  
+  // Use spinner from ora
+  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  
+  // Increment the counter for animation
+  if (!displayPRDParsingProgress.frameCounter) {
+    displayPRDParsingProgress.frameCounter = 0;
+  }
+  if (!displayPRDParsingProgress.updateToggle) {
+    displayPRDParsingProgress.updateToggle = false;
+  }
+  
+  // Toggle between updating and not updating to halve the speed
+  displayPRDParsingProgress.updateToggle = !displayPRDParsingProgress.updateToggle;
+  
+  // Only update every other call to make animation half as fast
+  if (displayPRDParsingProgress.updateToggle) {
+    displayPRDParsingProgress.frameCounter = (displayPRDParsingProgress.frameCounter + 1) % spinnerFrames.length;
+  }
+  
+  const spinner = chalk.cyan(spinnerFrames[displayPRDParsingProgress.frameCounter]);
+  
+  // Determine the message to display in the progress bar
+  let thinkingMessage = '';
+  
+  if (completed) {
+    // If process is completed, show completion message
+    thinkingMessage = '✅ Complete';
+  } else if (message) {
+    // If we have a specific message from the progress event, use that
+    thinkingMessage = message;
+    // Store this message for micro-progress updates to use
+    displayPRDParsingProgress.lastThinkingMessage = message;
+  } else if (state === 'thinking') {
+    thinkingMessage = 'Analyzing...';
+    // Store this message for micro-progress updates to use
+    displayPRDParsingProgress.lastThinkingMessage = 'Analyzing...';
+  } else {
+    thinkingMessage = 'Processing...';
+    // Store this message for micro-progress updates to use
+    displayPRDParsingProgress.lastThinkingMessage = 'Processing...';
+  }
+  
+  // Format status line based on whether we're complete or not
+  let statusLine;
+  
+  if (completed) {
+    // For completed progress, show checkmark and "Complete" text
+    statusLine = 
+      `  ${chalk.cyan('⏱')} ${timeDisplay} ${chalk.gray('|')} ` +
+      `Tasks: ${chalk.bold(`${totalTasks}/${totalTasks}`)} ${chalk.gray('|')} ` +
+      `Tokens (I/O): ${tokenDisplay} ${chalk.gray('|')} ` +
+      `${progressBar} ${chalk.gray('|')} ` +
+      `${chalk.green('✅')} ${chalk.green('Complete')}`;
+  } else {
+    // For standard in-progress state, use the most accurate task count
+    statusLine = 
+      `  ${chalk.cyan('⏱')} ${timeDisplay} ${chalk.gray('|')} ` +
+      `Tasks: ${chalk.bold(`${displayedTasks}/${totalTasks}`)} ${chalk.gray('|')} ` +
+      `Tokens (I/O): ${tokenDisplay} ${chalk.gray('|')} ` +
+      `${progressBar} ${chalk.gray('|')} ` +
+      `${thinkingMessage} ${spinner}`;
+  }
+  
+  // Set the flag to indicate status line has been started
+  displayPRDParsingProgress.statusLineStarted = true;
+  
+  // Clear the line and update the status
+  process.stdout.write('\r\x1B[K'); // This clears the entire line
+  
+  // Only print task detection if we have new task info
+  if (taskInfo && typeof taskInfo === 'object' && taskInfo.taskId && 
+      taskInfo.taskId > displayPRDParsingProgress.lastTaskId) {
+    // Function to color task titles based on priority
+    const priorityColor = task => {
+      const priority = (task.priority || '').toLowerCase();
+      if (priority === 'high') return chalk.hex('#CC0000');
+      if (priority === 'medium') return chalk.hex('#FF8800');
+      return chalk.yellow;
+    };
+    
+    // Write the status line
+    process.stdout.write(statusLine);
+    
+    // Move to next line and print task detection with proper indentation
+    console.log('\n' + 
+      `  ${chalk.green('✓')} Task ${chalk.bold(taskInfo.taskId)}: ` + 
+      `${priorityColor(taskInfo)(taskInfo.title)} ` + 
+      `${chalk.gray('(' + (taskInfo.priority || 'medium') + ' priority)')}`
+    );
+    
+    // Return cursor to beginning of line for next status update
+    process.stdout.write('\r');
+    
+    // Update our tracking
+    displayPRDParsingProgress.lastTaskId = taskInfo.taskId;
+  } else {
+    // Just write the status line (no new task)
+    process.stdout.write(statusLine);  
+  }
+  
+  // Additional handling for completion
+  if (completed && !displayPRDParsingProgress.hasCompletedBefore) {
+    // Move to next line after showing completion but leave the progress bar visible
+    process.stdout.write('\n\n');
+    
+    // Mark as having completed to avoid printing multiple newlines
+    displayPRDParsingProgress.hasCompletedBefore = true;
+    
+    // Reset other initialization state for next run
+    displayPRDParsingProgress.initialized = undefined;
+    displayPRDParsingProgress.statusLineStarted = false;
+    displayPRDParsingProgress.detectedTasks = new Map();
+    displayPRDParsingProgress.lastTaskId = 0;
+    displayPRDParsingProgress.lastPercentComplete = 0;
+    displayPRDParsingProgress.lastTokenCount = 0;
+    displayPRDParsingProgress.actualTaskCount = 0;
+  } else if (!microProgress && !completed) {
+    // Only log non-micro progress for debugging
+    log('debug', `[UI] Progress update: ${percentComplete.toFixed(1)}% → ${smoothPercentComplete.toFixed(1)}%`);
+  }
+}
+
+/**
+ * Display a summary of the PRD parsing results
+ * @param {Object} summary - Summary of the parsing results
+ * @param {number} summary.totalTasks - Total number of tasks generated
+ * @param {string} summary.prdFilePath - Path to the PRD file
+ * @param {string} summary.outputPath - Path where the tasks were saved
+ * @param {number} summary.elapsedTime - Total elapsed time in seconds
+ * @param {Object} summary.taskCategories - Breakdown of tasks by category/priority
+ * @param {boolean} summary.recoveryMode - Whether recovery mode was used to parse the response
+ */
+function displayPRDParsingSummary(summary) {
+  // Calculate task category percentages
+  const { totalTasks, taskCategories = {}, prdFilePath, outputPath, elapsedTime, recoveryMode = false } = summary;
+  
+  // Format the elapsed time
+  const timeDisplay = formatElapsedTime(elapsedTime);
+  
+  // Create a table for better alignment
+  const table = new Table({
+    chars: {
+      'top': '', 'top-mid': '', 'top-left': '', 'top-right': '',
+      'bottom': '', 'bottom-mid': '', 'bottom-left': '', 'bottom-right': '',
+      'left': '', 'left-mid': '', 'mid': '', 'mid-mid': '',
+      'right': '', 'right-mid': '', 'middle': ' '
+    },
+    style: { border: [], 'padding-left': 2 },
+    colWidths: [28, 50]
+  });
+  
+  // Basic info
+  table.push(
+    [chalk.cyan('Total tasks generated:'), chalk.bold(totalTasks)],
+    [chalk.cyan('Processing time:'), chalk.bold(timeDisplay)]
+  );
+  
+  // Priority distribution if available
+  if (taskCategories && Object.keys(taskCategories).length > 0) {
+    // Count tasks by priority
+    const highPriority = taskCategories.high || 0;
+    const mediumPriority = taskCategories.medium || 0;
+    const lowPriority = taskCategories.low || 0;
+    
+    // Calculate percentages
+    const percentHigh = Math.round((highPriority / totalTasks) * 100);
+    const percentMedium = Math.round((mediumPriority / totalTasks) * 100);
+    const percentLow = Math.round((lowPriority / totalTasks) * 100);
+    
+    // Priority distribution row - use the same color scheme as formatComplexitySummary
+    const priorityRow = [
+      chalk.cyan('Priority distribution:'),
+      `${chalk.hex('#CC0000').bold(highPriority)} ${chalk.hex('#CC0000')('High')} (${percentHigh}%) · ` +
+      `${chalk.hex('#FF8800').bold(mediumPriority)} ${chalk.hex('#FF8800')('Medium')} (${percentMedium}%) · ` +
+      `${chalk.yellow.bold(lowPriority)} ${chalk.yellow('Low')} (${percentLow}%)`
+    ];
+    table.push(priorityRow);
+    
+    // Visual bar representation of priority distribution
+    const barWidth = 40;  // Total width of the bar
+    
+    // Only show bars for priorities with at least 1 task
+    const highChars = highPriority > 0 ? 
+      Math.max(1, Math.round((highPriority / totalTasks) * barWidth)) : 0;
+    
+    const mediumChars = mediumPriority > 0 ? 
+      Math.max(1, Math.round((mediumPriority / totalTasks) * barWidth)) : 0;
+    
+    const lowChars = lowPriority > 0 ? 
+      Math.max(1, Math.round((lowPriority / totalTasks) * barWidth)) : 0;
+    
+    // Adjust bar width if some priorities have 0 tasks
+    const actualBarWidth = highChars + mediumChars + lowChars;
+    
+    // Use the same colors as formatComplexitySummary
+    const distributionBar = 
+      chalk.hex('#CC0000')('█'.repeat(highChars)) + 
+      chalk.hex('#FF8800')('█'.repeat(mediumChars)) + 
+      chalk.yellow('█'.repeat(lowChars)) +
+      // Add empty space if actual bar is shorter than expected
+      (actualBarWidth < barWidth ? chalk.gray('░'.repeat(barWidth - actualBarWidth)) : '');
+    
+    table.push([chalk.cyan('Distribution:'), distributionBar]);
+  }
+  
+  // Add file paths
+  table.push(
+    [chalk.cyan('PRD source:'), chalk.italic(prdFilePath)],
+    [chalk.cyan('Tasks file:'), chalk.italic(outputPath)]
+  );
+  
+  // Add recovery mode indicator if applicable
+  if (recoveryMode) {
+    table.push(
+      [chalk.yellow('Recovery mode:'), chalk.yellow('✓ Used recovery parsing')]
+    );
+  }
+  
+  // Final string output with title and footer
+  const output = [
+    chalk.bold.underline('PRD Parsing Complete'),
+    '',
+    table.toString()
+  ].join('\n');
+  
+  // Return a boxed version
+  console.log(boxen(output, {
+    padding: { top: 1, right: 1, bottom: 1, left: 1 },
+    borderColor: 'blue', // Change from green to blue to match formatComplexitySummary
+    borderStyle: 'round',
+    margin: { top: 1, right: 1, bottom: 1, left: 0 }
+  }));
+  
+  // Show recovery mode warning if needed
+  if (recoveryMode) {
+    console.log(boxen(
+      chalk.yellow.bold('⚠️ Recovery Mode Used') + '\n\n' +
+      chalk.white('The system had to recover from a parsing error in the AI response.') + '\n' +
+      chalk.white('While your tasks were successfully generated, there might be:') + '\n' +
+      chalk.white('• Missing details in some tasks') + '\n' +
+      chalk.white('• Incomplete metadata') + '\n' +
+      chalk.white('• Inconsistencies in task format') + '\n\n' +
+      chalk.white('Consider reviewing and potentially regenerating if issues are present.'),
+      { padding: 1, borderColor: 'yellow', borderStyle: 'round', margin: { top: 1, bottom: 1 } }
+    ));
+  }
+  
+  // Show next steps
+  console.log(boxen(
+    chalk.white.bold('Next Steps:') + '\n\n' +
+    `${chalk.cyan('1.')} Run ${chalk.yellow('task-master list')} to view all tasks\n` +
+    `${chalk.cyan('2.')} Run ${chalk.yellow('task-master expand --id=<id>')} to break down a task into subtasks\n` +
+    `${chalk.cyan('3.')} Run ${chalk.yellow('task-master analyze-complexity')} to analyze task complexity`,
+    { padding: 1, borderColor: 'cyan', borderStyle: 'round', margin: { top: 1 } }
+  ));
+}
+
 // Export UI functions
 export {
   displayBanner,
@@ -1385,5 +1981,8 @@ export {
   displayComplexityReport,
   displayAnalysisProgress,
   formatComplexitySummary,
-  confirmTaskOverwrite
+  confirmTaskOverwrite,
+  displayPRDParsingStart,
+  displayPRDParsingProgress,
+  displayPRDParsingSummary
 }; 

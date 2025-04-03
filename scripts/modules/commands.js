@@ -132,8 +132,8 @@ function registerCommands(programInstance) {
       // Check for existing tasks.json before proceeding with specified input file
       if (!await confirmOverwriteIfNeeded()) return;
       
-      console.log(chalk.blue(`Parsing PRD file: ${inputFile}`));
-      console.log(chalk.blue(`Generating ${numTasks} tasks...`));
+      log('debug', chalk.blue(`Parsing PRD file: ${inputFile}`));
+      log('debug', chalk.blue(`Generating ${numTasks} tasks...`));
       
       await parsePRD(inputFile, outputPath, numTasks);
     });

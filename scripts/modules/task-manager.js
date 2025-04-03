@@ -10,6 +10,7 @@ import boxen from 'boxen';
 import Table from 'cli-table3';
 import readline from 'readline';
 import { Anthropic } from '@anthropic-ai/sdk';
+import { EventEmitter } from 'events'; // Add EventEmitter import
 
 import { 
   CONFIG, 
@@ -32,7 +33,10 @@ import {
   stopLoadingIndicator,
   createProgressBar,
   displayAnalysisProgress,
-  formatComplexitySummary
+  formatComplexitySummary,
+  displayPRDParsingStart,
+  displayPRDParsingProgress,
+  displayPRDParsingSummary
 } from './ui.js';
 
 import {
@@ -41,13 +45,42 @@ import {
   generateSubtasksWithPerplexity,
   generateComplexityAnalysisPrompt,
   getAvailableAIModel,
-  handleClaudeError
+  handleClaudeError,
+  handleStreamingRequest
 } from './ai-services.js';
 
 import {
   validateTaskDependencies,
   validateAndFixDependencies
 } from './dependency-manager.js';
+
+/**
+ * Creates a progress emitter for streaming events
+ * @returns {Object} An object with methods to emit and listen to events
+ */
+function createProgressEmitter() {
+  const emitter = new EventEmitter();
+  
+  return {
+    emitter,
+    // Event emission methods
+    emitToken: (data) => emitter.emit('token', data),
+    emitTask: (data) => emitter.emit('task', data),
+    emitProgress: (data) => emitter.emit('progress', data),
+    emitComplete: (data) => emitter.emit('complete', data),
+    emitThinking: (data) => emitter.emit('thinking', data),
+    
+    // Event listener methods
+    onToken: (callback) => emitter.on('token', callback),
+    onTask: (callback) => emitter.on('task', callback),
+    onProgress: (callback) => emitter.on('progress', callback),
+    onComplete: (callback) => emitter.on('complete', callback),
+    onThinking: (callback) => emitter.on('thinking', callback),
+    
+    // Cleanup method
+    removeAllListeners: () => emitter.removeAllListeners()
+  };
+}
 
 // Initialize Anthropic client
 const anthropic = new Anthropic({
@@ -81,16 +114,1129 @@ try {
  * @param {number} numTasks - Number of tasks to generate
  */
 async function parsePRD(prdPath, tasksPath, numTasks) {
+  // Define progressInterval at the top level of the function so the handler can access it
+  let progressInterval = null;
+  
+  // Create progress emitter for streaming events
+  const progress = createProgressEmitter();
+  
+  // Add a debug listener at the process level to see if SIGINT is being received
+  const debugSignalListener = () => {
+    log('debug', 'SIGINT received by debug listener');
+  };
+  process.on('SIGINT', debugSignalListener);
+  
+  // Set up SIGINT (Control-C) handler to cancel the operation gracefully
+  let sigintHandler;
+  const registerSigintHandler = () => {
+    // Only register if not already registered
+    if (!sigintHandler) {
+      sigintHandler = () => {
+        log('debug', 'SIGINT handler executing for parsePRD');
+        
+        // Try to clear any intervals before exiting
+        if (progressInterval) {
+          clearInterval(progressInterval);
+          progressInterval = null;
+          log('debug', 'Cleared progress interval');
+        }
+        
+        // Clear any terminal state
+        process.stdout.write('\r\x1B[K'); // Clear current line
+        
+        // Show cancellation message
+        console.log(chalk.yellow('\n\nPRD parsing cancelled by user.'));
+        
+        // Make sure we remove our event listeners before exiting
+        progress.removeAllListeners();
+        log('debug', 'Removed all progress event listeners');
+        
+        // Clean up SIGINT handler
+        cleanupSigintHandler();
+        
+        // Show cursor (in case it was hidden)
+        process.stdout.write('\u001B[?25h');
+        
+        // Force exit after giving time for cleanup
+        setTimeout(() => {
+          process.exit(0);
+        }, 100);
+      };
+      
+      // Register the handler
+      process.on('SIGINT', sigintHandler);
+      log('debug', 'Registered SIGINT handler for parsePRD');
+    }
+  };
+  
+  // Clean up function to remove the handler when done
+  const cleanupSigintHandler = () => {
+    if (sigintHandler) {
+      process.removeListener('SIGINT', sigintHandler);
+      sigintHandler = null;
+      log('debug', 'Removed SIGINT handler');
+    }
+    
+    // Also remove the debug listener
+    process.removeListener('SIGINT', debugSignalListener);
+    log('debug', 'Removed debug SIGINT listener');
+  };
+  
+  // Cleanup resources function to ensure consistent state even after errors
+  const cleanupResources = () => {
+    // Clean up SIGINT handler
+    cleanupSigintHandler();
+    
+    // Clean up progressInterval
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+    
+    // Clean up event listeners
+    progress.removeAllListeners();
+    
+    // Restore cursor
+    process.stdout.write('\u001B[?25h');
+  };
+  
   try {
-    log('info', `Parsing PRD file: ${prdPath}`);
+    // Input validation
+    if (!prdPath || typeof prdPath !== 'string') {
+      throw new Error('Invalid PRD file path. Please provide a valid path to a PRD document.');
+    }
+    
+    if (!fs.existsSync(prdPath)) {
+      throw new Error(`PRD file not found at path: ${prdPath}. Please check the file path and try again.`);
+    }
+    
+    if (!numTasks || !Number.isInteger(numTasks) || numTasks <= 0) {
+      numTasks = CONFIG.defaultNumTasks || 10;
+      log('warn', `Invalid number of tasks specified. Using default value: ${numTasks}`);
+    }
+    
+    // Validate API key
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY environment variable is missing. Required for PRD parsing.');
+    }
+    
+    log('debug', `Parsing PRD file: ${prdPath}`);
+    
+    // Register SIGINT handler to allow cancellation with Control-C
+    registerSigintHandler();
+    
+    // Track start time
+    const startTime = Date.now();
+    
+    // Display parsing start announcement
+    displayPRDParsingStart(prdPath, tasksPath, numTasks, CONFIG.model, CONFIG.temperature);
     
     // Read the PRD content
     const prdContent = fs.readFileSync(prdPath, 'utf8');
     
-    // Call Claude to generate tasks
-    const tasksData = await callClaude(prdContent, prdPath, numTasks);
+    // Validate PRD content
+    if (!prdContent || prdContent.trim().length === 0) {
+      throw new Error('The PRD file is empty. Please provide a file with content.');
+    }
     
-    // Create the directory if it doesn't exist
+    if (prdContent.length < 100) { // Arbitrary minimum length to be a useful PRD
+      log('warn', 'The PRD content is very short. This may not provide enough context for generating meaningful tasks.');
+    }
+    
+    // Estimate total tokens (roughly 1 token per 4 chars + margin for system prompt)
+    const estimatedTotalTokens = Math.ceil(prdContent.length / 4) + 1000;
+    
+    // Initialize progress tracking
+    let percentComplete = 0;
+    let elapsedSeconds = 0;
+    let contextTokens = 0;
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let tasksGenerated = 0; // Initialize to 0
+    let microProgress = 0; // Track micro-progress between task detections
+    let lastMicroUpdateTime = Date.now(); // Track time of last micro update
+    
+    // Initialize static variables for displayPRDParsingProgress
+    displayPRDParsingProgress.thinkingState = null;
+    displayPRDParsingProgress.latestTaskInfo = null;
+    
+    // Set up progress event handlers
+    progress.onProgress((data) => {
+      // Update our tracking variables
+      percentComplete = data.percentComplete || percentComplete;
+      contextTokens = data.tokenCount || contextTokens;
+      promptTokens = data.promptTokens || promptTokens;
+      completionTokens = data.completionTokens || completionTokens;
+      tasksGenerated = data.tasksGenerated || tasksGenerated;
+      
+      // Additional handling for near-completion state
+      if (data.nearCompletion) {
+        log('debug', 'Approaching completion state');
+      }
+    });
+    
+    progress.onTask((taskInfo) => {
+      // Always update tasksGenerated based on taskCount from the event
+      if (taskInfo.taskCount !== undefined) {
+        const prevTasksGenerated = tasksGenerated;
+        tasksGenerated = taskInfo.taskCount;
+        log('debug', `onTask: Updated tasksGenerated from ${prevTasksGenerated} to ${tasksGenerated}`);
+        
+        // Ensure seenTaskIds.size also stays in sync with taskCount
+        if (seenTaskIds.size !== taskInfo.taskCount) {
+          log('debug', `SYNC: Detected discrepancy - seenTaskIds.size=${seenTaskIds.size} but taskCount=${taskInfo.taskCount}`);
+          // We don't know which IDs to add/remove, so we can't directly update seenTaskIds here
+          // But we log the discrepancy for debugging purposes
+        }
+      }
+      
+      log('debug', `Detected task ${taskInfo.taskId}: ${taskInfo.title} (taskCount=${taskInfo.taskCount})`);
+      
+      // Store latest task info for use in the progress interval
+      if (!displayPRDParsingProgress.latestTaskInfo) {
+        displayPRDParsingProgress.latestTaskInfo = {};
+      }
+      
+      // Always update the latest task info with complete information
+      displayPRDParsingProgress.latestTaskInfo = {
+        taskId: taskInfo.taskId,
+        title: taskInfo.title,
+        priority: taskInfo.priority,
+        description: taskInfo.description,
+        taskCount: taskInfo.taskCount
+      };
+      
+      log('debug', `onTask: Updated latestTaskInfo with taskId=${taskInfo.taskId}, title="${taskInfo.title?.substring(0, 20)}..."`);
+    });
+    
+    progress.onThinking((data) => {
+      // Update our display with thinking state information
+      if (data.message) {
+        log('debug', `Thinking state: ${data.message}`);
+        
+        // Store thinking state for use in the progress interval
+        if (!displayPRDParsingProgress.thinkingState) {
+          displayPRDParsingProgress.thinkingState = {};
+        }
+        
+        displayPRDParsingProgress.thinkingState = {
+          message: data.message,
+          state: data.state || 'processing'
+        };
+      }
+    });
+    
+    // Setup progress update interval - this maintains compatibility with current UI
+    progressInterval = setInterval(() => {
+      elapsedSeconds = (Date.now() - startTime) / 1000;
+      
+      // Track our current thinking state
+      const currentThinkingState = displayPRDParsingProgress.thinkingState || {};
+      
+      // Get latest task info if available
+      const latestTaskInfo = displayPRDParsingProgress.latestTaskInfo;
+      
+      log('debug', `Progress interval: seenTaskIds.size=${seenTaskIds.size}, tasksGenerated=${tasksGenerated}, numTasks=${numTasks}`);
+      if (latestTaskInfo) {
+        log('debug', `Progress interval: latestTaskInfo.taskId=${latestTaskInfo.taskId}, latestTaskInfo.taskCount=${latestTaskInfo.taskCount}`);
+      }
+      
+      // Calculate continuous micro-progress
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastMicroUpdateTime;
+      
+      // Update progress every interval (100ms)
+      if (timeSinceLastUpdate >= 100) {
+        // Direct calculation based on actual tasks detected
+        // No micro-progress estimation
+        if (seenTaskIds.size === 0) {
+          percentComplete = 0;
+        } else {
+          // Calculate progress as a percentage of tasks completed (0-95%)
+          percentComplete = (seenTaskIds.size / numTasks) * 95;
+        }
+        
+        log('debug', `SYNC: Direct progress calculation: ${percentComplete}% based on ${seenTaskIds.size}/${numTasks} tasks`);
+        
+        lastMicroUpdateTime = now;
+        
+        // Cap total progress at 99% until completion
+        const totalProgress = Math.min(99, percentComplete);
+        
+        // Emit progress update based on actual task count
+        progress.emitProgress({
+          percentComplete: totalProgress,
+          tokenCount: contextTokens,
+          estimatedTotalTokens,
+          tasksGenerated: seenTaskIds.size,  // Always use seenTaskIds.size
+          totalTasks: numTasks,
+          elapsed: elapsedSeconds,
+          microProgress: false  // Not using micro-progress anymore
+        });
+      }
+      
+      log('debug', `Calling displayPRDParsingProgress with tasksGenerated=${tasksGenerated}, totalTasks=${numTasks}`);
+      if (latestTaskInfo) {
+        log('debug', `Passing taskInfo with taskId=${latestTaskInfo.taskId}`);
+      }
+      
+      displayPRDParsingProgress({
+        percentComplete: Math.min(99, percentComplete),
+        elapsed: elapsedSeconds,
+        contextTokens,
+        estimatedTotalTokens,
+        promptTokens,
+        completionTokens,
+        tasksGenerated: seenTaskIds.size,  // Always use seenTaskIds.size
+        totalTasks: numTasks,
+        completed: false,
+        message: currentThinkingState.message, // Pass current thinking message
+        state: currentThinkingState.state, // Pass current state
+        taskInfo: latestTaskInfo, // Pass latest task info
+        microProgress: false // No longer using micro-progress
+      });
+      
+      // Reset latest task info after it's displayed
+      displayPRDParsingProgress.latestTaskInfo = null;
+    }, 100); // Update every 100ms
+    
+    // Build the system prompt
+    const systemPrompt = `You are an AI assistant helping to break down a Product Requirements Document (PRD) into a set of sequential development tasks. 
+Your goal is to create ${numTasks} well-structured, actionable development tasks based on the PRD provided.
+
+Each task should follow this JSON structure:
+{
+  "id": number,
+  "title": string,
+  "description": string,
+  "status": "pending",
+  "dependencies": number[] (IDs of tasks this depends on),
+  "priority": "high" | "medium" | "low",
+  "details": string (implementation details),
+  "testStrategy": string (validation approach)
+}
+
+Guidelines:
+1. Create exactly ${numTasks} tasks, numbered from 1 to ${numTasks}
+2. Each task should be atomic and focused on a single responsibility
+3. Order tasks logically - consider dependencies and implementation sequence
+4. Early tasks should focus on setup, core functionality first, then advanced features
+5. Include clear validation/testing approach for each task
+6. Set appropriate dependency IDs (a task can only depend on tasks with lower IDs)
+7. Assign priority (high/medium/low) based on criticality and dependency order
+8. Include detailed implementation guidance in the "details" field
+
+Expected output format:
+{
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Setup Project Repository",
+      "description": "...",
+      ...
+    },
+    ...
+  ],
+  "metadata": {
+    "projectName": "${CONFIG.projectName || 'PRD Implementation'}",
+    "totalTasks": ${numTasks},
+    "sourceFile": "${prdPath}",
+    "generatedAt": "${new Date().toISOString().split('T')[0]}"
+  }
+}
+
+Important: Your response must be valid JSON only, with no additional explanation or comments.`;
+
+    // Calculate prompt token estimate for progress tracking
+    const estimatedPromptTokens = Math.ceil(prdContent.length / 4) + 
+                                 Math.ceil(systemPrompt.length / 4) + 
+                                 100; // Account for role tokens and message formatting
+
+    // Set the initial promptTokens to our estimate - will be updated with actual values when available
+    promptTokens = estimatedPromptTokens;
+    log('debug', `Setting initial promptTokens to estimated value: ${promptTokens}`);
+
+    // Setup streaming response tracking
+    let buffer = '';
+    let lastTaskTime = Date.now();
+    const seenTaskIds = new Set();
+    
+    // Function to detect tasks in the streaming response
+    const detectTasks = (content) => {
+      // Look for task patterns in the buffer using improved regex patterns
+      // Match both JSON format and potential partially formed JSON
+      const titleRegex = /"title"\s*:\s*"([^"]+)"/g;
+      const idRegex = /"id"\s*:\s*(\d+)/g;
+      const priorityRegex = /"priority"\s*:\s*"(high|medium|low)"/gi;
+      const descriptionRegex = /"description"\s*:\s*"([^"]+)"/g;
+      
+      let match;
+      const newTasks = [];
+      
+      // Process ID and title matches to find tasks
+      const foundIds = new Set();
+      const matchedTasks = new Map();
+      
+      // First pass: find all task IDs
+      while ((match = idRegex.exec(content)) !== null) {
+        const taskId = parseInt(match[1], 10);
+        foundIds.add(taskId);
+        
+        log('debug', `Found task ID ${taskId} in content at position ${match.index}`);
+        
+        // Only process IDs we haven't seen before
+        if (!seenTaskIds.has(taskId)) {
+          log('debug', `New task ID ${taskId} detected (current seenTaskIds size: ${seenTaskIds.size})`);
+          
+          // Store the position where we found this ID
+          matchedTasks.set(taskId, { 
+            pos: match.index,
+            id: taskId
+          });
+        }
+      }
+      
+      log('debug', `Total unique IDs found: ${foundIds.size}, New tasks to process: ${matchedTasks.size}`);
+      
+      // Second pass: find titles for these tasks
+      for (const [taskId, taskInfo] of matchedTasks.entries()) {
+        const taskStartPos = taskInfo.pos;
+        // Search for title after the ID position
+        const titleSearch = content.substring(taskStartPos);
+        const titleMatch = titleSearch.match(/"title"\s*:\s*"([^"]+)"/);
+        
+        if (titleMatch) {
+          // Found title - add to task info
+          taskInfo.title = titleMatch[1];
+          log('debug', `Found title for task ${taskId}: "${titleMatch[1].substring(0, 30)}..."`);
+          
+          // Search for priority after the ID
+          const priorityMatch = titleSearch.match(/"priority"\s*:\s*"(high|medium|low)"/i);
+          if (priorityMatch) {
+            taskInfo.priority = priorityMatch[1].toLowerCase();
+            log('debug', `Found priority for task ${taskId}: ${priorityMatch[1].toLowerCase()}`);
+          } else {
+            taskInfo.priority = 'medium'; // Default priority
+          }
+          
+          // Look for description if available
+          const descriptionMatch = titleSearch.match(/"description"\s*:\s*"([^"]+)"/);
+          if (descriptionMatch) {
+            taskInfo.description = descriptionMatch[1];
+            log('debug', `Found description for task ${taskId}`);
+          }
+          
+          // Calculate estimated total task count if not set already
+          if (numTasks === CONFIG.defaultNumTasks && taskId > 1) {
+            // Once we see at least two tasks, we can start to make a better guess
+            // Look for patterns like "id": X where X is higher than what we've seen
+            const idMatches = content.match(/"id"\s*:\s*(\d+)/g) || [];
+            const allIds = idMatches.map(match => parseInt(match.match(/\d+/)[0], 10));
+            if (allIds.length > 0) {
+              const maxId = Math.max(...allIds);
+              if (maxId > numTasks) {
+                const prevNumTasks = numTasks;
+                numTasks = maxId;
+                log('debug', `Estimated total tasks increased from ${prevNumTasks} to ${numTasks} based on highest ID found`);
+              }
+            }
+          }
+          
+          const prevSize = seenTaskIds.size;
+          // Mark this task as seen
+          seenTaskIds.add(taskId);
+          
+          if (seenTaskIds.size > prevSize) {
+            log('debug', `Added task ID ${taskId} to seenTaskIds. Size changed from ${prevSize} to ${seenTaskIds.size}`);
+            
+            // We have a new complete task, add it to our tasks
+            newTasks.push(taskInfo);
+            
+            // Update last task time for timing tracking
+            lastTaskTime = Date.now();
+            
+            // ALWAYS set tasksGenerated to match seenTaskIds.size for consistency
+            tasksGenerated = seenTaskIds.size;
+            log('debug', `SYNC: Set tasksGenerated=${tasksGenerated} to match seenTaskIds.size=${seenTaskIds.size}`);
+            
+            // Emit a task event for this new task
+            progress.emitTask({
+              taskId: taskId,
+              title: taskInfo.title || '',
+              priority: taskInfo.priority || 'medium',
+              description: taskInfo.description || '',
+              taskCount: seenTaskIds.size  // ALWAYS include accurate taskCount
+            });
+            
+            log('debug', `Emitted task event for ID=${taskId}, title="${taskInfo.title?.substring(0, 20)}...", count=${seenTaskIds.size}`);
+          } else {
+            log('debug', `Task ID ${taskId} was already in seenTaskIds, size remains ${seenTaskIds.size}`);
+          }
+        } else {
+          log('debug', `No title found for task ${taskId} yet, may be incomplete`);
+        }
+      }
+      
+      // Improve token counting for more accurate progress tracking
+      // Count tokens based on streaming response content
+      // Note: This is an approximation, as the exact token count isn't available from the API
+      // We use a combination of character count and some heuristics
+      const tokenCount = calculateTokens(content);
+      
+      // Calculate a more accurate percentage that includes:
+      // 1. Actual processed token count
+      // 2. Task completion ratio
+      // 3. Position in the response stream
+      // The goal is to prevent jumps between phases
+      
+      // Start with token-based percentage
+      let tokenBasedPercent = Math.min(99, Math.floor((tokenCount / estimatedTotalTokens) * 100));
+      
+      // Use task detection to enhance percentage calculation
+      // If we've found tasks, we should be making progress
+      const taskBasedPercent = seenTaskIds.size > 0 
+        ? Math.max(5, Math.min(90, Math.floor((seenTaskIds.size / numTasks) * 100)))
+        : 0;
+        
+      // If we see "metadata" in the response, we're nearing completion
+      const nearingCompletion = content.includes('"metadata":') && seenTaskIds.size >= numTasks * 0.8;
+      
+      // If we're at the end brackets of the JSON, we're almost done
+      const finalizing = content.endsWith('}}') && seenTaskIds.size > 0;
+      
+      // Bias percentage based on these signals
+      let adjustedPercent = tokenBasedPercent;
+      
+      // If we're detecting tasks, ensure progress stays in a reasonable range
+      if (seenTaskIds.size > 0) {
+        // Ensure percentage is at least proportional to tasks generated
+        adjustedPercent = Math.max(adjustedPercent, taskBasedPercent);
+      }
+      
+      // Handle completion phases
+      if (nearingCompletion) {
+        // When nearing completion, percentage should be at least 85%
+        adjustedPercent = Math.max(adjustedPercent, 85);
+      }
+      
+      if (finalizing) {
+        // When finalizing, percentage should be at least 95%
+        adjustedPercent = Math.max(adjustedPercent, 95);
+      }
+      
+      // Clamp final percentage between 0-99 (100% only when truly complete)
+      const percentComplete = Math.min(99, Math.max(0, adjustedPercent));
+      
+      // Emit progress event with calculated values
+      progress.emitProgress({
+        percentComplete,
+        tokenCount,
+        estimatedTotalTokens,
+        tasksGenerated: seenTaskIds.size,
+        totalTasks: numTasks,
+        nearCompletion: nearingCompletion || finalizing
+      });
+      
+      // Analyze buffer for hints of upcoming tasks during quiet periods
+      if (Date.now() - lastTaskTime > 3000) {
+        // Look for specific patterns that indicate different phases of processing
+        let processingState = 'processing';
+        let message = 'Analyzing PRD content...';
+        
+        if (content.match(/dependencies/i) && !seenTaskIds.size) {
+          message = 'Creating task structure...';
+        } else if (content.match(/{"id":\s*\d+\s*,\s*$/) || content.match(/{"id":\s*\d+\s*}$/)) {
+          message = 'Starting new task...';
+        } else if (content.match(/"priority":\s*"(high|medium|low)"$/i)) {
+          message = 'Setting task priorities...';
+        } else if (content.match(/"details":\s*"/i)) {
+          message = 'Writing implementation details...';
+        } else if (content.match(/"testStrategy":\s*"/i)) {
+          message = 'Defining test strategies...';
+        } else if (seenTaskIds.size > 0 && content.match(/"metadata":/i)) {
+          message = 'Finalizing task metadata...';
+          processingState = 'finishing';
+        }
+        
+        // Send thinking state for UI updates during quiet periods
+        progress.emitThinking({
+          message,
+          state: processingState
+        });
+      }
+      
+      return newTasks;
+    };
+    
+    // Helper function to calculate tokens from text content
+    // This provides a more accurate estimation than simple character count
+    function calculateTokens(text) {
+      if (!text) return 0;
+      
+      // Claude's tokenization is roughly 4 characters per token on average
+      // But we want to be more precise by counting:
+      // - Words (roughly 1.3 tokens per word)
+      // - Numbers (roughly 1 token per 2-4 digits)
+      // - Special characters (roughly 1 token each)
+      
+      // Count words (split by whitespace)
+      const words = text.split(/\s+/).filter(w => w.length > 0);
+      const wordTokens = words.length * 1.3;
+      
+      // Count digits (numbers take fewer tokens than their character count suggests)
+      const digits = (text.match(/\d/g) || []).length;
+      const digitTokens = digits * 0.25; // Approximately 4 digits per token
+      
+      // Count special characters and punctuation (often 1 token each)
+      const specialChars = (text.match(/[^\w\s]/g) || []).length;
+      
+      // Sum these components and add a bias for JSON structure
+      // JSON structure (braces, quotes, etc.) tends to tokenize efficiently
+      const jsonBias = Math.min(500, text.length * 0.05); // Cap the bias
+      
+      // Calculate total adjusted token count
+      const calculatedTokens = Math.ceil(wordTokens + digitTokens + specialChars - jsonBias);
+      
+      // Safety bounds - ensure at least 1 token per 5 characters, and no more than 1 per 2 characters
+      const minTokens = Math.ceil(text.length / 5);
+      const maxTokens = Math.ceil(text.length / 2);
+      
+      return Math.min(maxTokens, Math.max(minTokens, calculatedTokens));
+    }
+    
+    // Custom streaming progress callback function
+    const streamingTracker = (content, chunkInfo = {}) => {
+      // Add state variables for micro-progress
+      if (typeof streamingTracker.microProgress === 'undefined') {
+        streamingTracker.microProgress = 0;
+        streamingTracker.lastMicroUpdateTime = Date.now();
+        streamingTracker.microUpdateInterval = 200; // milliseconds between updates
+        streamingTracker.maxMicroProgressPerPhase = {
+          'analyzing': 1.5,
+          'starting': 1.0,
+          'creating_tasks': 1.5,
+          'generating_tasks': 1.0,
+          'finalizing': 0.8
+        };
+      }
+      
+      // Process the accumulating buffer to detect tasks and other patterns
+      detectTasks(content);
+      
+      // Update token counting from provided chunk info if available
+      if (chunkInfo.totalTokens) {
+        // Use exact token count from API if available
+        contextTokens = chunkInfo.totalTokens;
+      } else {
+        // Use our improved token calculation function if available
+        contextTokens = calculateTokens ? calculateTokens(content) : Math.floor(content.length / 4);
+      }
+      
+      // Track prompt and completion tokens separately from each chunk
+      if (chunkInfo.promptTokens) {
+        promptTokens = chunkInfo.promptTokens;
+        log('debug', `Updated promptTokens to ${promptTokens}`);
+      }
+
+      if (chunkInfo.completionTokens) {
+        completionTokens = chunkInfo.completionTokens;
+        log('debug', `Updated completionTokens to ${completionTokens}`);
+      } else if (chunkInfo.delta && chunkInfo.delta.text) {
+        // If we have new text but no completion token count, estimate based on the delta
+        const deltaTokenEstimate = Math.ceil(chunkInfo.delta.text.length / 4);
+        completionTokens += deltaTokenEstimate;
+        log('debug', `Estimated ${deltaTokenEstimate} tokens from delta, completionTokens now ${completionTokens}`);
+      }
+
+      // Update context tokens to be the sum of prompt and completion tokens
+      contextTokens = promptTokens + completionTokens;
+      
+      // Update estimated total tokens based on more accurate prompt token count if available
+      if (chunkInfo.promptTokens && estimatedTotalTokens) {
+        const currentEstimate = estimatedTotalTokens;
+        // Keep the completion token estimate but use exact prompt tokens
+        const completionEstimate = currentEstimate - Math.ceil(prdContent.length / 4);
+        estimatedTotalTokens = chunkInfo.promptTokens + completionEstimate;
+      }
+      
+      // Calculate progress percentage with multiple signals
+      let calculatedPercent;
+      
+      // Track phases for better progress estimation - refine phase detection
+      let currentPhase = 'analyzing';
+      
+      // More granular phase detection to ensure we show "Creating initial tasks..."
+      if (content.includes('"tasks":') && !content.includes('"id":')) {
+        // We have the tasks array started but no task definitions yet
+        currentPhase = 'starting';
+      } else if (content.includes('"id":') && seenTaskIds.size === 0) {
+        // We're starting to define tasks but haven't detected a complete one yet
+        currentPhase = 'creating_tasks';
+      } else if (seenTaskIds.size > 0 && seenTaskIds.size < numTasks) {
+        // We have at least one complete task identified through all tasks
+        currentPhase = 'generating_tasks';
+      } else if (seenTaskIds.size >= numTasks || content.includes('"metadata":')) {
+        currentPhase = 'finalizing';
+      }
+      
+      // Use phase-based progress calculation with improved distribution
+      switch (currentPhase) {
+        case 'analyzing':
+          // Initial analysis phase: 0-10%
+          // Use token count as a basis, but create a smoother ramp-up from 0
+          const initialTokenScale = contextTokens / 500;
+          calculatedPercent = Math.min(10, Math.max(1, Math.floor(initialTokenScale * 10)));
+          log('debug', `Progress [analyzing]: initialTokenScale=${initialTokenScale.toFixed(2)}, calculatedPercent=${calculatedPercent}%`);
+          break;
+          
+        case 'starting':
+          // Starting task generation: 10-15%
+          // Ensure a more granular progression here
+          const startingProgress = (contextTokens - 500) / 500; // Normalize based on tokens beyond analysis phase
+          calculatedPercent = 10 + Math.min(5, Math.max(1, Math.floor(startingProgress * 5)));
+          log('debug', `Progress [starting]: startingProgress=${startingProgress.toFixed(2)}, calculatedPercent=${calculatedPercent}%`);
+          break;
+          
+        case 'creating_tasks':
+          // Creating initial tasks: 15-25%
+          // Allow more headroom before first task appears
+          const creatingProgress = Math.min(1, (contextTokens - 1000) / 1000);
+          calculatedPercent = 15 + Math.floor(creatingProgress * 10);
+          log('debug', `Progress [creating_tasks]: creatingProgress=${creatingProgress.toFixed(2)}, calculatedPercent=${calculatedPercent}%`);
+          break;
+          
+        case 'generating_tasks': {
+          // Main task generation phase: 25-90%
+          // Distribute more evenly among tasks with weighted progression
+          
+          // Reserve 65% of the progress bar for tasks (from 25% to 90%)
+          const TASK_PROGRESS_RANGE = 65;
+          
+          // Improved approach to calculate task-based progress:
+          // 1. Base progress on complete tasks (seenTaskIds.size)
+          // 2. Add partial progress for the task currently being generated
+          // 3. Weight earlier tasks slightly higher than later tasks
+          
+          // Calculate base percentage from complete tasks
+          let baseTaskProgress = 0;
+          let weightDebugInfo = "";
+          
+          if (seenTaskIds.size === 0) {
+            // No tasks detected yet
+            baseTaskProgress = 0;
+            weightDebugInfo = "no tasks yet";
+          } else if (numTasks === 1) {
+            // Special case: only one task
+            baseTaskProgress = seenTaskIds.size * TASK_PROGRESS_RANGE;
+            weightDebugInfo = "single task case";
+          } else {
+            // Use a weighted distribution that gives slightly more progress to early tasks
+            // and slightly less to later tasks to avoid large initial jumps
+            const taskWeights = [];
+            let totalWeight = 0;
+            
+            // Create a sliding scale of weights with first task getting ~50% less weight
+            for (let i = 0; i < numTasks; i++) {
+              // Calculate weight: 0.5 for first task, gradually increasing to 1.0 for last task
+              const weight = 0.5 + (0.5 * i / (numTasks - 1));
+              taskWeights.push(weight);
+              totalWeight += weight;
+            }
+            
+            // Calculate progress based on completed tasks and their weights
+            let weightedProgress = 0;
+            for (let i = 0; i < seenTaskIds.size; i++) {
+              weightedProgress += taskWeights[i];
+            }
+            
+            // Scale to our progress range
+            baseTaskProgress = (weightedProgress / totalWeight) * TASK_PROGRESS_RANGE;
+            weightDebugInfo = `weights=[${taskWeights.map(w => w.toFixed(2)).join(', ')}], weighted=${weightedProgress.toFixed(2)}/${totalWeight.toFixed(2)}`;
+          }
+          
+          // Add the base percentage to the starting point for this phase (25%)
+          calculatedPercent = 25 + Math.floor(baseTaskProgress);
+          
+          // Add small micro-progress for partial progress on the current task
+          let microProgressAddition = 0;
+          if (seenTaskIds.size < numTasks) {
+            // Estimate progress on current task based on content
+            const estimatedCurrentTaskProgress = content.includes(`"id": ${seenTaskIds.size + 1}`) ? 0.3 : 0;
+            
+            // Calculate the weight for the current in-progress task
+            const currentTaskWeight = numTasks > 1 ? 
+              (0.5 + (0.5 * seenTaskIds.size / (numTasks - 1))) : 1;
+              
+            // Calculate the value of a single task in our progress range
+            const singleTaskValue = TASK_PROGRESS_RANGE / numTasks;
+            
+            // Add partial progress for the current task being generated
+            microProgressAddition = Math.floor(estimatedCurrentTaskProgress * singleTaskValue * currentTaskWeight);
+            calculatedPercent += microProgressAddition;
+          }
+          
+          log('debug', `Progress [generating_tasks]: tasks=${seenTaskIds.size}/${numTasks}, baseProgress=${baseTaskProgress.toFixed(2)}%, microAdd=${microProgressAddition}%, calculatedPercent=${calculatedPercent}%, ${weightDebugInfo}`);
+          
+          break;
+        }
+          
+        case 'finalizing':
+          // Finalizing and metadata: 90-99%
+          let finalizingBase, finalizingRange;
+          if (content.includes('"generatedAt"')) {
+            finalizingBase = 95;
+            finalizingRange = Math.min(4, Math.floor((contextTokens / estimatedTotalTokens) * 5));
+            calculatedPercent = finalizingBase + finalizingRange;
+          } else {
+            finalizingBase = 90;
+            finalizingRange = Math.min(5, Math.floor((contextTokens / estimatedTotalTokens) * 10));
+            calculatedPercent = finalizingBase + finalizingRange;
+          }
+          log('debug', `Progress [finalizing]: base=${finalizingBase}%, range=${finalizingRange}%, calculatedPercent=${calculatedPercent}%`);
+          break;
+          
+        default:
+          // Fallback: linear progress based on tokens
+          calculatedPercent = Math.min(99, Math.floor((contextTokens / estimatedTotalTokens) * 100));
+          log('debug', `Progress [default]: tokens=${contextTokens}/${estimatedTotalTokens}, calculatedPercent=${calculatedPercent}%`);
+      }
+      
+      // Ensure progress doesn't jump backwards
+      const originalPercent = calculatedPercent;
+      if (calculatedPercent < percentComplete) {
+        calculatedPercent = percentComplete;
+        log('debug', `Progress smoothing: prevented backwards jump ${originalPercent}% → ${calculatedPercent}%`);
+      }
+      
+      // Limit maximum progress jump to prevent large jumps
+      const maxJump = 3; // Reduced from 5% to 3% for smoother progression
+      if (calculatedPercent > percentComplete + maxJump) {
+        const beforeSmoothing = calculatedPercent;
+        calculatedPercent = percentComplete + maxJump;
+        log('debug', `Progress smoothing: limited jump ${beforeSmoothing}% → ${calculatedPercent}% (max jump: ${maxJump}%)`);
+      }
+      
+      // When real progress is made, reset microProgress and update percentComplete
+      if (calculatedPercent > percentComplete) {
+        const prevPercent = percentComplete;
+        percentComplete = Math.min(99, calculatedPercent);
+        streamingTracker.microProgress = 0; // Reset micro-progress when real progress is made
+        streamingTracker.lastMicroUpdateTime = Date.now(); // Reset timer
+        log('debug', `Progress update: ${prevPercent}% → ${percentComplete}%`);
+      }
+      
+      // Calculate micro-progress for smoother updates between "real" progress points
+      const now = Date.now();
+      const elapsedSinceLastMicroUpdate = now - streamingTracker.lastMicroUpdateTime;
+      
+      // Only update micro-progress on a timer to avoid too many UI updates
+      if (elapsedSinceLastMicroUpdate >= streamingTracker.microUpdateInterval) {
+        // Calculate the micro-progress increment based on phase, elapsed time and tokens
+        const elapsedSeconds = elapsedSinceLastMicroUpdate / 1000;
+        
+        // Base time factor - small increment based on elapsed time
+        const timeFactor = Math.min(0.2, elapsedSeconds * 0.05);
+        
+        // Token factor - additional increment if we received new tokens
+        let tokenFactor = 0;
+        if (chunkInfo.delta && chunkInfo.delta.text) {
+          const tokenDelta = Math.ceil(chunkInfo.delta.text.length / 4);
+          tokenFactor = Math.min(0.3, tokenDelta * 0.002);
+        }
+        
+        // Combine factors and apply a phase-specific cap
+        const maxMicroForPhase = streamingTracker.maxMicroProgressPerPhase[currentPhase] || 0.5;
+        const combinedIncrement = Math.min(timeFactor + tokenFactor, 0.5);
+        streamingTracker.microProgress = Math.min(
+          streamingTracker.microProgress + combinedIncrement, 
+          maxMicroForPhase
+        );
+        
+        streamingTracker.lastMicroUpdateTime = now;
+        
+        log('debug', `Micro-progress update: phase=${currentPhase}, time=${timeFactor.toFixed(2)}, token=${tokenFactor.toFixed(2)}, total=${streamingTracker.microProgress.toFixed(2)}`);
+      }
+      
+      // Calculate display percentage by adding micro-progress to percentComplete
+      // Note: This only affects the display, not the internal progress tracking
+      const displayPercent = Math.min(98, percentComplete + streamingTracker.microProgress);
+      
+      // Calculate the expected next task number - what we're defining now
+      const nextTaskNumber = seenTaskIds.size + 1;
+      
+      // Generate appropriate status message based on refined phases
+      let thinkingMessage;
+      
+      switch (currentPhase) {
+        case 'analyzing':
+          thinkingMessage = 'Analyzing PRD content...';
+          break;
+        case 'starting':
+          thinkingMessage = 'Preparing task structure...';
+          break;
+        case 'creating_tasks':
+          thinkingMessage = 'Creating initial tasks...';
+          break;
+        case 'generating_tasks':
+          // Sync the task message with UI display - use the last displayed task ID from UI
+          // to ensure we're always showing the next task after what the user has seen
+          const lastDisplayedTaskId = displayPRDParsingProgress.lastTaskId || 0;
+          const currentTaskNumber = lastDisplayedTaskId + 1;
+          
+          thinkingMessage = `Defining task ${currentTaskNumber}...`;
+          log('debug', `Setting thinking message with currentTaskNumber=${currentTaskNumber}, lastDisplayedTaskId=${lastDisplayedTaskId}, seenTaskIds.size=${seenTaskIds.size}`);
+          break;
+        case 'finalizing':
+          // Use the same task display pattern in the finalizing phase for consistency
+          const lastShownTaskId = displayPRDParsingProgress.lastTaskId || 0;
+          const nextTaskNumber = lastShownTaskId + 1;
+          
+          thinkingMessage = `Defining task ${nextTaskNumber}...`;
+          log('debug', `Setting final phase thinking message with nextTaskNumber=${nextTaskNumber}, lastShownTaskId=${lastShownTaskId}, seenTaskIds.size=${seenTaskIds.size}`);
+          break;
+        default:
+          thinkingMessage = 'Processing...';
+      }
+      
+      // Emit thinking state update
+      log('debug', `Emitting thinking state: ${thinkingMessage} (${currentPhase})`);
+      progress.emitThinking({
+        message: thinkingMessage,
+        state: currentPhase === 'finalizing' ? 'finishing' : 'processing'
+      });
+      
+      // Emit progress update
+      log('debug', `Emitting progress update: ${seenTaskIds.size}/${numTasks} tasks, phase=${currentPhase}, nextTaskNumber=${nextTaskNumber}`);
+      progress.emitProgress({
+        percentComplete: displayPercent, // Use the display percentage with micro-progress
+        tokenCount: contextTokens,
+        estimatedTotalTokens,
+        promptTokens: chunkInfo.promptTokens || 0,
+        completionTokens: chunkInfo.completionTokens || 0,
+        tasksGenerated: seenTaskIds.size,
+        totalTasks: numTasks,
+        elapsed: (Date.now() - startTime) / 1000,
+        nearCompletion: currentPhase === 'finalizing',
+        microProgress: true // Flag to indicate this is a micro-update
+      });
+    };
+    
+    let responseData;
+    try {
+      // Call Claude to parse the PRD and generate tasks
+      const stream = await anthropic.messages.stream({
+        model: CONFIG.model,
+        max_tokens: CONFIG.maxTokens,
+        temperature: CONFIG.temperature,
+        system: systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: prdContent
+          }
+        ],
+      });
+      
+      // Process the streaming response
+      for await (const chunk of stream) {
+        if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+          buffer += chunk.delta.text;
+          
+          // Look for token usage information in the chunk
+          let chunkMetadata = {
+            isSlowChunk: false,
+            timeSinceLastChunk: 0,
+            delta: { text: chunk.delta.text }
+          };
+          
+          // Check if the chunk contains any token usage information
+          if (chunk.usage) {
+            // Extract token usage if available
+            if (chunk.usage.input_tokens) {
+              chunkMetadata.promptTokens = chunk.usage.input_tokens;
+              log('debug', `Found input_tokens in chunk.usage: ${chunk.usage.input_tokens}`);
+            }
+            if (chunk.usage.output_tokens) {
+              chunkMetadata.completionTokens = chunk.usage.output_tokens;
+              log('debug', `Found output_tokens in chunk.usage: ${chunk.usage.output_tokens}`);
+              chunkMetadata.totalTokens = (chunkMetadata.promptTokens || 0) + chunk.usage.output_tokens;
+            }
+          }
+          
+          // Check if the chunk contains any metadata about the streaming state
+          if (chunk.type === 'message_delta' && chunk.delta && chunk.delta.usage) {
+            // Extract token usage if available at the message level
+            if (chunk.delta.usage.input_tokens) {
+              chunkMetadata.promptTokens = chunk.delta.usage.input_tokens;
+              log('debug', `Found input_tokens in message_delta: ${chunk.delta.usage.input_tokens}`);
+            }
+            if (chunk.delta.usage.output_tokens) {
+              chunkMetadata.completionTokens = chunk.delta.usage.output_tokens;
+              log('debug', `Found output_tokens in message_delta: ${chunk.delta.usage.output_tokens}`);
+              chunkMetadata.totalTokens = (chunkMetadata.promptTokens || 0) + chunk.delta.usage.output_tokens;
+            }
+          }
+          
+          // Estimate the current phase based on output analysis
+          if (buffer.includes('"tasks":') && !buffer.includes('"id":')) {
+            chunkMetadata.phase = 'starting';
+          } else if (buffer.includes('"id":') && !buffer.match(/"title":\s*"[^"]+"/)) {
+            // We have id but no complete title yet - creating tasks phase
+            chunkMetadata.phase = 'creating_tasks';
+          } else if (buffer.includes('"id":') && !buffer.includes('"metadata":')) {
+            // Combined phase for all task generation until metadata
+            chunkMetadata.phase = 'generating_tasks';
+          } else if (buffer.includes('"metadata":')) {
+            chunkMetadata.phase = 'finalizing';
+          } else {
+            chunkMetadata.phase = 'analyzing';
+          }
+          
+          // Update tracking with better metadata
+          streamingTracker(buffer, chunkMetadata);
+        } else if (chunk.type === 'message_stop') {
+          // This event comes at the end of the streaming response
+          log('debug', `Received message_stop event: ${JSON.stringify(chunk)}`);
+          
+          // Check if we have final token usage statistics
+          if (chunk.message && chunk.message.usage) {
+            const finalMetadata = {
+              phase: 'finalizing',
+              isComplete: true
+            };
+            
+            // Extract token usage from the message usage
+            if (chunk.message.usage.input_tokens) {
+              finalMetadata.promptTokens = chunk.message.usage.input_tokens;
+              promptTokens = chunk.message.usage.input_tokens;
+              log('debug', `Final input_tokens from message_stop: ${promptTokens}`);
+            }
+            
+            if (chunk.message.usage.output_tokens) {
+              finalMetadata.completionTokens = chunk.message.usage.output_tokens;
+              completionTokens = chunk.message.usage.output_tokens;
+              log('debug', `Final output_tokens from message_stop: ${completionTokens}`);
+            }
+            
+            // Update context tokens based on final usage
+            contextTokens = promptTokens + completionTokens;
+            finalMetadata.totalTokens = contextTokens;
+            
+            // Send a final progress update with the accurate token counts
+            streamingTracker(buffer, finalMetadata);
+          }
+        }
+      }
+      
+      // Process the final response
+      try {
+        // Use a regular expression to find the JSON object in the response
+        const jsonMatch = buffer.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error('Could not find valid JSON in the response from Claude. The response format was unexpected.');
+        }
+        
+        const jsonText = jsonMatch[0];
+        responseData = JSON.parse(jsonText);
+        
+        if (!responseData || !responseData.tasks || !Array.isArray(responseData.tasks)) {
+          throw new Error('The parsed JSON does not contain a valid tasks array. Claude may have returned an unexpected response format.');
+        }
+      } catch (parseError) {
+        // Log the error and attempt to recover by looking for task objects
+        log('error', `Error parsing JSON response: ${parseError.message}`);
+        log('debug', `Attempting to recover by parsing individual tasks from the response...`);
+        
+        // Attempt to recover the tasks from the response using regex
+        const taskObjects = [];
+        const taskRegex = /\{\s*"id"\s*:\s*(\d+)[\s\S]*?(?="id"|$)/g;
+        let match;
+        
+        while ((match = taskRegex.exec(buffer)) !== null) {
+          try {
+            // Extract and clean up the task object
+            let taskText = match[0];
+            // Ensure it ends with a closing brace
+            if (!taskText.trim().endsWith('}')) {
+              taskText += '}';
+            }
+            
+            // Try to parse the task JSON
+            const task = JSON.parse(taskText);
+            if (task && task.id && task.title) {
+              taskObjects.push(task);
+            }
+          } catch (taskParseError) {
+            log('debug', `Failed to parse individual task: ${taskParseError.message}`);
+            // Continue to the next match
+          }
+        }
+        
+        if (taskObjects.length > 0) {
+          log('info', `Successfully recovered ${taskObjects.length} tasks from the response`);
+          responseData = {
+            tasks: taskObjects,
+            metadata: {
+              projectName: CONFIG.projectName || 'PRD Implementation',
+              totalTasks: taskObjects.length,
+              sourceFile: prdPath,
+              generatedAt: new Date().toISOString().split('T')[0],
+              recoveryMode: true
+            }
+          };
+        } else {
+          throw new Error('Failed to recover any valid tasks from the Claude response. The generation may have failed completely.');
+        }
+      }
+      
+      // Update final UI state to show task detection is complete
+      percentComplete = 100;
+      microProgress = 0; // Reset microProgress on completion
+      
+      displayPRDParsingProgress({
+        percentComplete,
+        elapsed: (Date.now() - startTime) / 1000,
+        contextTokens,
+        estimatedTotalTokens,
+        promptTokens,
+        completionTokens,
+        tasksGenerated: responseData.tasks.length,
+        totalTasks: responseData.tasks.length,
+        completed: true
+      });
+      
+    } catch (apiError) {
+      // Handle Anthropic API errors specifically
+      if (apiError.status) {
+        // This is likely an API error with HTTP status
+        let errorMessage = `Anthropic API error (${apiError.status}): ${apiError.message}`;
+        
+        // Provide more specific guidance based on error code
+        if (apiError.status === 401) {
+          errorMessage += '\nPossible causes: Invalid API key, expired token, or authentication issue.';
+        } else if (apiError.status === 400) {
+          errorMessage += '\nPossible causes: Malformed request, invalid model name, or input too long.';
+        } else if (apiError.status === 429) {
+          errorMessage += '\nPossible causes: Rate limit exceeded or quota reached. Try again later.';
+        } else if (apiError.status >= 500) {
+          errorMessage += '\nThis appears to be a server error on Anthropic\'s side. Try again later.';
+        }
+        
+        throw new Error(errorMessage);
+      } else {
+        // Handle network errors, timeouts, etc.
+        throw new Error(`Error calling Anthropic API: ${apiError.message}. This might be due to a network issue or service interruption.`);
+      }
+    }
+    
+    // Validate the tasks data
+    if (!responseData.tasks || !Array.isArray(responseData.tasks) || responseData.tasks.length === 0) {
+      throw new Error('No tasks were generated. The AI response may not have contained valid task data.');
+    }
+    
+    const tasksData = responseData;
+    
+    // Create tasks directory if it doesn't exist
     const tasksDir = path.dirname(tasksPath);
     if (!fs.existsSync(tasksDir)) {
       fs.mkdirSync(tasksDir, { recursive: true });
@@ -99,32 +1245,67 @@ async function parsePRD(prdPath, tasksPath, numTasks) {
     // Write the tasks to the file
     writeJSON(tasksPath, tasksData);
     
-    log('success', `Successfully generated ${tasksData.tasks.length} tasks from PRD`);
-    log('info', `Tasks saved to: ${tasksPath}`);
-    
     // Generate individual task files
     await generateTaskFiles(tasksPath, tasksDir);
     
-    console.log(boxen(
-      chalk.green(`Successfully generated ${tasksData.tasks.length} tasks from PRD`),
-      { padding: 1, borderColor: 'green', borderStyle: 'round' }
-    ));
+    // Calculate task category breakdown
+    const taskCategories = {
+      high: 0,
+      medium: 0,
+      low: 0
+    };
     
-    console.log(boxen(
-      chalk.white.bold('Next Steps:') + '\n\n' +
-      `${chalk.cyan('1.')} Run ${chalk.yellow('task-master list')} to view all tasks\n` +
-      `${chalk.cyan('2.')} Run ${chalk.yellow('task-master expand --id=<id>')} to break down a task into subtasks`,
-      { padding: 1, borderColor: 'cyan', borderStyle: 'round', margin: { top: 1 } }
-    ));
+    tasksData.tasks.forEach(task => {
+      const priority = (task.priority || 'medium').toLowerCase();
+      if (taskCategories[priority] !== undefined) {
+        taskCategories[priority]++;
+      }
+    });
+    
+    // Display summary with statistics
+    displayPRDParsingSummary({
+      totalTasks: tasksData.tasks.length,
+      prdFilePath: prdPath,
+      outputPath: tasksPath,
+      elapsedTime: elapsedSeconds,
+      taskCategories,
+      recoveryMode: responseData.metadata?.recoveryMode || false
+    });
+    
+    log('success', `Successfully generated ${tasksData.tasks.length} tasks from PRD`);
+    log('info', `Tasks saved to: ${tasksPath}`);
+    
+    // Clean up all resources
+    cleanupResources();
+    
+    return tasksPath;
   } catch (error) {
     log('error', `Error parsing PRD: ${error.message}`);
+    
+    // Clean up all resources
+    cleanupResources();
+    
+    // Log error for debugging
     console.error(chalk.red(`Error: ${error.message}`));
     
     if (CONFIG.debug) {
       console.error(error);
     }
     
-    process.exit(1);
+    // Show a user-friendly error message in a box
+    console.log(boxen(
+      chalk.red.bold('PRD Parsing Failed') + '\n\n' +
+      chalk.white(`${error.message}`) + '\n\n' +
+      chalk.white('Suggestions:') + '\n' +
+      chalk.white('• Check your internet connection') + '\n' +
+      chalk.white('• Verify your API key is valid and has sufficient quota') + '\n' +
+      chalk.white('• Try with a smaller PRD or reduce the number of tasks') + '\n' +
+      chalk.white('• Run with DEBUG=true for more details'),
+      { padding: 1, borderColor: 'red', borderStyle: 'round', margin: { top: 1 } }
+    ));
+    
+    // Throw the error instead of exiting to allow caller to handle it
+    throw error;
   }
 }
 
@@ -317,14 +1498,14 @@ Return only the updated tasks as a valid JSON array.`
               if (originalSigintHandler) originalSigintHandler();
             };
             
-            for await (const chunk of stream) {
+          for await (const chunk of stream) {
               // Check if we should stop processing (SIGINT received)
               if (!isProcessing) {
                 break;
               }
               
-              if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-                responseText += chunk.delta.text;
+            if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+              responseText += chunk.delta.text;
                 chunkCount++;
               }
             }
@@ -797,6 +1978,14 @@ function generateTaskFiles(tasksPath, outputDir) {
     
     // Generate task files
     log('info', 'Generating individual task files...');
+    
+    // Get task IDs to determine range
+    const taskIds = data.tasks.map(task => task.id);
+    const minId = Math.min(...taskIds);
+    const maxId = Math.max(...taskIds);
+    const firstId = minId.toString().padStart(3, '0');
+    const lastId = maxId.toString().padStart(3, '0');
+    
     data.tasks.forEach(task => {
       const taskPath = path.join(outputDir, `task_${task.id.toString().padStart(3, '0')}.txt`);
       
@@ -859,10 +2048,12 @@ function generateTaskFiles(tasksPath, outputDir) {
       
       // Write the file
       fs.writeFileSync(taskPath, content);
-      log('info', `Generated: task_${task.id.toString().padStart(3, '0')}.txt`);
+      // No longer log each individual file
     });
     
-    log('success', `All ${data.tasks.length} tasks have been generated into '${outputDir}'.`);
+    // Log a single summary line with the range of tasks generated
+    log('info', `Generated ${data.tasks.length} files: task_${firstId}.txt → task_${lastId}.txt`);
+    log('success', `All tasks have been generated into '${outputDir}'.`);
   } catch (error) {
     log('error', `Error generating task files: ${error.message}`);
     console.error(chalk.red(`Error generating task files: ${error.message}`));
@@ -2146,14 +3337,14 @@ async function addTask(tasksPath, prompt, dependencies = [], priority = 'medium'
         if (originalSigintHandler) originalSigintHandler();
       };
       
-      for await (const chunk of stream) {
+    for await (const chunk of stream) {
         // Check if we should stop processing (SIGINT received)
         if (!isProcessing) {
           break;
         }
         
-        if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-          fullResponse += chunk.delta.text;
+      if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+        fullResponse += chunk.delta.text;
           chunkCount++;
         }
       }
@@ -2260,7 +3451,9 @@ async function analyzeTaskComplexity(options) {
   let streamingInterval = null;
   
   // Add a debug listener at the process level to see if SIGINT is being received
-  const debugSignalListener = () => {};
+  const debugSignalListener = () => {
+    log('debug', 'SIGINT received by debug listener in analyzeTaskComplexity');
+  };
   process.on('SIGINT', debugSignalListener);
   
   // Set up SIGINT (Control-C) handler to cancel the operation gracefully
@@ -2269,10 +3462,13 @@ async function analyzeTaskComplexity(options) {
     // Only register if not already registered
     if (!sigintHandler) {
       sigintHandler = () => {
+        log('debug', 'SIGINT handler executing for analyzeTaskComplexity');
+        
         // Try to clear any intervals before exiting
         if (streamingInterval) {
           clearInterval(streamingInterval);
           streamingInterval = null;
+          log('debug', 'Cleared streaming interval');
         }
         
         // Clear any terminal state
@@ -2283,12 +3479,16 @@ async function analyzeTaskComplexity(options) {
         // Make sure we remove our event listeners before exiting
         cleanupSigintHandler();
         
+        // Show cursor (in case it was hidden)
+        process.stdout.write('\u001B[?25h');
+        
         // Force exit after giving time for cleanup
         setTimeout(() => {
           process.exit(0);
         }, 100);
       };
       process.on('SIGINT', sigintHandler);
+      log('debug', 'Registered SIGINT handler for analyzeTaskComplexity');
     }
   };
   
@@ -2297,10 +3497,12 @@ async function analyzeTaskComplexity(options) {
     if (sigintHandler) {
       process.removeListener('SIGINT', sigintHandler);
       sigintHandler = null;
+      log('debug', 'Removed SIGINT handler');
     }
     
     // Also remove the debug listener
     process.removeListener('SIGINT', debugSignalListener);
+    log('debug', 'Removed debug SIGINT listener');
   };
   const thresholdScore = parseFloat(options.threshold || '5');
   const useResearch = options.research || false;
@@ -2426,7 +3628,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           displayAnalysisProgress(progressData);
           
           stopLoadingIndicator(loadingIndicator);
-
+          
           // Log the first part of the response for debugging
           console.debug(chalk.gray('Response first 200 chars:'));
           console.debug(chalk.gray(fullResponse.substring(0, 200)));
@@ -2458,7 +3660,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         // Call the LLM API with streaming
         // Add try-catch for better error handling specifically for API call
         try {
-          const stream = await anthropic.messages.create({
+        const stream = await anthropic.messages.create({
           max_tokens: CONFIG.maxTokens,
           model: modelOverride || CONFIG.model,
           temperature: CONFIG.temperature,
@@ -2525,7 +3727,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         
         // Clean up the interval - stop updating progress
         if (streamingInterval) {
-          clearInterval(streamingInterval);
+        clearInterval(streamingInterval);
           streamingInterval = null;
         }
         
@@ -2596,7 +3798,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             }
           }
         }
-
+        
         // Log the cleaned response for debugging
         console.debug(chalk.gray("Attempting to parse cleaned JSON..."));
         console.debug(chalk.gray("Cleaned response (first 100 chars):"));
@@ -2788,24 +3990,24 @@ Your response must be a clean JSON array only, following exactly this format:
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
 
               try {
-                const result = await perplexity.chat.completions.create({
-                  model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
-                  messages: [
-                    {
-                      role: "system", 
-                      content: "You are a technical analysis AI that only responds with clean, valid JSON. Never include explanatory text or markdown formatting in your response."
-                    },
-                    {
-                      role: "user",
-                      content: missingTasksResearchPrompt
-                    }
-                  ],
-                  temperature: CONFIG.temperature,
-                  max_tokens: CONFIG.maxTokens,
-                });
-                
-                // Extract the response
-                missingAnalysisResponse = result.choices[0].message.content;
+              const result = await perplexity.chat.completions.create({
+                model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
+                messages: [
+                  {
+                    role: "system", 
+                    content: "You are a technical analysis AI that only responds with clean, valid JSON. Never include explanatory text or markdown formatting in your response."
+                  },
+                  {
+                    role: "user",
+                    content: missingTasksResearchPrompt
+                  }
+                ],
+                temperature: CONFIG.temperature,
+                max_tokens: CONFIG.maxTokens,
+              });
+              
+              // Extract the response
+              missingAnalysisResponse = result.choices[0].message.content;
                 
                 // Stop interval and show completion
                 clearInterval(missingTasksInterval);
