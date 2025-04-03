@@ -987,12 +987,20 @@ Important: Your response must be valid JSON only, with no additional explanation
           log('debug', `Setting thinking message with currentTaskNumber=${currentTaskNumber}, lastDisplayedTaskId=${lastDisplayedTaskId}, seenTaskIds.size=${seenTaskIds.size}`);
           break;
         case 'finalizing':
-          // Use the same task display pattern in the finalizing phase for consistency
+          // Only show finalizing message if all tasks have been detected AND displayed
           const lastShownTaskId = displayPRDParsingProgress.lastTaskId || 0;
-          const nextTaskNumber = lastShownTaskId + 1;
           
-          thinkingMessage = `Defining task ${nextTaskNumber}...`;
-          log('debug', `Setting final phase thinking message with nextTaskNumber=${nextTaskNumber}, lastShownTaskId=${lastShownTaskId}, seenTaskIds.size=${seenTaskIds.size}`);
+          if (seenTaskIds.size >= numTasks && lastShownTaskId >= numTasks) {
+            // All tasks have been fully processed and displayed to the user
+            thinkingMessage = 'Finalizing task generation...';
+            log('debug', `Showing finalizing message after processing AND displaying ${seenTaskIds.size}/${numTasks} tasks (lastShownTaskId=${lastShownTaskId})`);
+          } else {
+            // Either not all tasks detected yet, or not all displayed yet
+            const nextTaskNumber = lastShownTaskId + 1;
+            
+            thinkingMessage = `Defining task ${nextTaskNumber}...`;
+            log('debug', `Still showing task definition message: nextTaskNumber=${nextTaskNumber}, lastShownTaskId=${lastShownTaskId}, seenTaskIds.size=${seenTaskIds.size}, numTasks=${numTasks}`);
+          }
           break;
         default:
           thinkingMessage = 'Processing...';
