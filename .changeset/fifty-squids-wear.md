@@ -2,4 +2,4 @@
 "task-master-ai": patch
 ---
 
-Add license to repo
+Add CI for testing
