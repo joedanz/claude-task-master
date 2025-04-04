@@ -107,6 +107,9 @@ try {
   log('warn', 'Research-backed features will not be available');
 }
 
+// Module-level sigintHandler declaration to be used across functions
+let sigintHandler = null;
+
 /**
  * Parse a PRD file and generate tasks
  * @param {string} prdPath - Path to the PRD file
@@ -1805,9 +1808,48 @@ Return only the updated task as a valid JSON object.`
           });
           
           // Process the stream
-          for await (const chunk of stream) {
-            if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-              responseText += chunk.delta.text;
+          let streamProcessingComplete = false;
+          try {
+            for await (const chunk of stream) {
+              if (isCancelled) {
+                log('info', 'Claude streaming cancelled by user');
+                streamProcessingComplete = true;
+                break;
+              }
+              
+              if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+                fullResponse += chunk.delta.text;
+              }
+            }
+            streamProcessingComplete = true;
+          } catch (streamError) {
+            // Handle stream-specific errors
+            log('error', `Stream processing error: ${streamError.message}`);
+            throw streamError;
+          } finally {
+            // Clean up interval regardless of how we exit the stream processing
+            if (streamingInterval) {
+              clearInterval(streamingInterval);
+              streamingInterval = null;
+            }
+            
+            // Handle cancellation after stream processing
+            if (isCancelled) {
+              throw new Error('Operation cancelled by user');
+            }
+            
+            // Only show completion if stream processing completed normally
+            if (streamProcessingComplete) {
+              progressData.percentComplete = 100;
+              progressData.elapsed = (Date.now() - startTime) / 1000;
+              progressData.tasksAnalyzed = progressData.totalTasks;
+              progressData.completed = true;
+              progressData.contextTokens = Math.max(progressData.contextTokens, estimatedContextTokens);
+              displayAnalysisProgress(progressData);
+              
+              // Clear the line completely to remove any artifacts (after showing completion)
+              process.stdout.write('\r\x1B[K'); // Clear current line
+              process.stdout.write('\r'); // Move cursor to beginning of line
             }
           }
           
@@ -3457,6 +3499,10 @@ async function analyzeTaskComplexity(options) {
   
   // Define streamingInterval at the top level of the function so the handler can access it
   let streamingInterval = null;
+  // Track cancellation state
+  let isCancelled = false;
+  // Store original handler to restore later
+  const originalSigintHandler = sigintHandler;
   
   // Add a debug listener at the process level to see if SIGINT is being received
   const debugSignalListener = () => {
@@ -3465,12 +3511,12 @@ async function analyzeTaskComplexity(options) {
   process.on('SIGINT', debugSignalListener);
   
   // Set up SIGINT (Control-C) handler to cancel the operation gracefully
-  let sigintHandler;
   const registerSigintHandler = () => {
     // Only register if not already registered
     if (!sigintHandler) {
       sigintHandler = () => {
         log('debug', 'SIGINT handler executing for analyzeTaskComplexity');
+        isCancelled = true;
         
         // Try to clear any intervals before exiting
         if (streamingInterval) {
@@ -3490,10 +3536,12 @@ async function analyzeTaskComplexity(options) {
         // Show cursor (in case it was hidden)
         process.stdout.write('\u001B[?25h');
         
-        // Force exit after giving time for cleanup
-        setTimeout(() => {
-          process.exit(0);
-        }, 100);
+        // Use isCancelled flag to signal stopping and only exit in non-test mode
+        if (process.env.NODE_ENV !== 'test') {
+          setTimeout(() => {
+            process.exit(0);
+          }, 100);
+        }
       };
       process.on('SIGINT', sigintHandler);
       log('debug', 'Registered SIGINT handler for analyzeTaskComplexity');
@@ -3504,7 +3552,7 @@ async function analyzeTaskComplexity(options) {
   const cleanupSigintHandler = () => {
     if (sigintHandler) {
       process.removeListener('SIGINT', sigintHandler);
-      sigintHandler = null;
+      sigintHandler = originalSigintHandler; // Restore original handler if any
       log('debug', 'Removed SIGINT handler');
     }
     
@@ -3512,11 +3560,13 @@ async function analyzeTaskComplexity(options) {
     process.removeListener('SIGINT', debugSignalListener);
     log('debug', 'Removed debug SIGINT listener');
   };
+  
   const thresholdScore = parseFloat(options.threshold || '5');
   const useResearch = options.research || false;
   
   // Initialize error tracking variable
   let apiError = false;
+  let loadingIndicator = null;
   
   try {
     // Read tasks.json
@@ -3530,7 +3580,7 @@ async function analyzeTaskComplexity(options) {
     const prompt = generateComplexityAnalysisPrompt(tasksData);
     
     // Start loading indicator
-    const loadingIndicator = startLoadingIndicator('Calling AI to analyze task complexity...');
+    loadingIndicator = startLoadingIndicator('Calling AI to analyze task complexity...');
     
     let fullResponse = '';
     
@@ -3546,7 +3596,10 @@ async function analyzeTaskComplexity(options) {
           const totalTaskCount = tasksData.tasks.length;
           
           // IMPORTANT: Stop the loading indicator before showing the progress bar
-          stopLoadingIndicator(loadingIndicator);
+          if (loadingIndicator) {
+            stopLoadingIndicator(loadingIndicator);
+            loadingIndicator = null;
+          }
           
           // Set up the progress data
           const progressData = {
@@ -3569,6 +3622,13 @@ async function analyzeTaskComplexity(options) {
           
           // Update progress display at regular intervals
           streamingInterval = setInterval(() => {
+            // Check if cancelled
+            if (isCancelled) {
+              clearInterval(streamingInterval);
+              streamingInterval = null;
+              return;
+            }
+            
             // Update elapsed time
             progressData.elapsed = (Date.now() - startTime) / 1000;
             progressData.percentComplete = Math.min(90, (progressData.elapsed / 30) * 100); // Estimate based on typical 30s completion
@@ -3578,6 +3638,11 @@ async function analyzeTaskComplexity(options) {
             
             displayAnalysisProgress(progressData);
           }, 100);
+          
+          // Exit early if cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
           
           // Modify prompt to include more context for Perplexity and explicitly request JSON
           const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
@@ -3603,6 +3668,11 @@ Your response must be a clean JSON array only, following exactly this format:
 
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
           
+          // Exit early if cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
+          
           const result = await perplexity.chat.completions.create({
             model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
             messages: [
@@ -3618,6 +3688,11 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             temperature: CONFIG.temperature,
             max_tokens: CONFIG.maxTokens,
           });
+          
+          // Exit early if cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
           
           // Extract the response text
           fullResponse = result.choices[0].message.content;
@@ -3636,11 +3711,17 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           displayAnalysisProgress(progressData);
           
           stopLoadingIndicator(loadingIndicator);
-          
+
           // Log the first part of the response for debugging
           console.debug(chalk.gray('Response first 200 chars:'));
           console.debug(chalk.gray(fullResponse.substring(0, 200)));
         } catch (perplexityError) {
+          // Check if this was a cancellation
+          if (perplexityError.message === 'Operation cancelled by user') {
+            log('info', 'Perplexity analysis cancelled');
+            throw perplexityError; // Re-throw to exit the function
+          }
+          
           console.error(chalk.yellow('Falling back to Claude for complexity analysis...'));
           console.error(chalk.gray('Perplexity error:'), perplexityError.message);
 
@@ -3649,11 +3730,14 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             clearInterval(streamingInterval);
             streamingInterval = null;
           }
-          cleanupSigintHandler();
           
-          // Continue to Claude as fallback
-          console.log(chalk.yellow('\nFalling back to Claude after Perplexity error: ' + perplexityError.message));
-          await useClaudeForComplexityAnalysis();
+          // Continue to Claude as fallback if not cancelled
+          if (!isCancelled) {
+            console.log(chalk.yellow('\nFalling back to Claude after Perplexity error: ' + perplexityError.message));
+            await useClaudeForComplexityAnalysis();
+          } else {
+            throw new Error('Operation cancelled by user');
+          }
         }
       } else {
         // Use Claude directly if research flag is not set
@@ -3668,7 +3752,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         // Call the LLM API with streaming
         // Add try-catch for better error handling specifically for API call
         try {
-        const stream = await anthropic.messages.create({
+          const stream = await anthropic.messages.create({
           max_tokens: CONFIG.maxTokens,
           model: modelOverride || CONFIG.model,
           temperature: CONFIG.temperature,
@@ -3735,7 +3819,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         
         // Clean up the interval - stop updating progress
         if (streamingInterval) {
-        clearInterval(streamingInterval);
+          clearInterval(streamingInterval);
           streamingInterval = null;
         }
         
@@ -3751,8 +3835,18 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         process.stdout.write('\r\x1B[K'); // Clear current line
         process.stdout.write('\r'); // Move cursor to beginning of line
         } catch (apiError) {
+          // Check if this was a cancellation
+          if (apiError.message === 'Operation cancelled by user') {
+            log('info', 'Claude analysis cancelled');
+            throw apiError; // Re-throw to exit the function
+          }
+          
           // Handle specific API errors here
-          if (streamingInterval) clearInterval(streamingInterval);
+          if (streamingInterval) {
+            clearInterval(streamingInterval);
+            streamingInterval = null;
+          }
+          
           process.stdout.write('\r\x1B[K'); // Clear current line
           
           console.error(chalk.red(`\nAPI Error: ${apiError.message || 'Unknown error'}\n`));
@@ -3761,16 +3855,13 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           
           // Rethrow to be caught by outer handler
           throw apiError;
-        } finally {
-          // Clean up SIGINT handler
-          cleanupSigintHandler();
-          
-          // Ensure the interval is cleared
-          if (streamingInterval) {
-            clearInterval(streamingInterval);
-            streamingInterval = null;
-          }
         }
+      }
+      
+      // If cancelled at this point, exit before parsing
+      if (isCancelled) {
+        log('info', 'Analysis was cancelled. Not generating report.');
+        return;
       }
       
       // Parse the JSON response
@@ -3837,15 +3928,46 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           cleanedResponse = cleanedResponse.replace(/:(\s*)'([^']*)'(\s*[,}])/g, ':$1"$2"$3');
           
           // 4. Fix unterminated strings - common with LLM responses
-          const untermStringPattern = /:(\s*)"([^"]*)(?=[,}])/g;
-          cleanedResponse = cleanedResponse.replace(untermStringPattern, ':$1"$2"');
+          cleanedResponse = cleanedResponse.replace(/:(\s*)"([^"]*)(?=[,}])/g, ':$1"$2"$3');
           
-          // 5. Fix multi-line strings by replacing newlines
-          cleanedResponse = cleanedResponse.replace(/:(\s*)"([^"]*)\n([^"]*)"/g, ':$1"$2 $3"');
+          // 5. Fix multi-line strings by escaping newlines
+          cleanedResponse = cleanedResponse.replace(/:(\s*)"([^"]*)\n([^"]*)"/g, ':$1"$2\\n$3"');
           
+          // 6. Add more aggressive fixing for unterminated strings by scanning for unclosed quotes
+          let fixedResponse = '';
+          let inString = false;
+          let lastCharWasEscape = false;
+          
+          for (let i = 0; i < cleanedResponse.length; i++) {
+            const char = cleanedResponse[i];
+            
+            // Handle string boundaries and escaping
+            if (char === '"' && !lastCharWasEscape) {
+              inString = !inString;
+            }
+            
+            // Check for end of property or object without closing quote
+            if (inString && (i === cleanedResponse.length - 1 || 
+                (char === ',' && cleanedResponse[i+1] === '"') ||
+                (char === '}' && !lastCharWasEscape))) {
+              // Close the string before the comma or brace
+              fixedResponse += '"';
+              inString = false;
+            }
+            
+            fixedResponse += char;
+            lastCharWasEscape = char === '\\' && !lastCharWasEscape;
+          }
+          
+          // Ensure we're not still in a string at the end
+          if (inString) {
+            fixedResponse += '"';
+          }
+          
+          // Try the fixed response
           try {
-            complexityAnalysis = JSON.parse(cleanedResponse);
-            console.log(chalk.green("Successfully parsed JSON after fixing common issues"));
+            complexityAnalysis = JSON.parse(fixedResponse);
+            console.log(chalk.green("Successfully parsed JSON after aggressive fixing"));
           } catch (fixedJsonError) {
             console.log(chalk.red("Failed to parse JSON even after fixes, attempting more aggressive cleanup..."));
             
@@ -3859,10 +3981,49 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
                 for (const taskMatch of taskMatches) {
                   try {
                     // Try to parse each task object individually
-                    const fixedTask = taskMatch.replace(/,\s*$/, ''); // Remove trailing commas
-                    const taskObj = JSON.parse(`${fixedTask}`);
-                    if (taskObj && taskObj.taskId) {
-                      complexityAnalysis.push(taskObj);
+                    let fixedTask = taskMatch.replace(/,\s*$/, ''); // Remove trailing commas
+                    
+                    // Attempt to fix unterminated strings in each task
+                    fixedTask = fixedTask.replace(/"([^"]*?)(?=,|})/g, '"$1"');
+                    
+                    // Add missing quotes around values
+                    fixedTask = fixedTask.replace(/:\s*([^",{\[\s][^,}\]]*?)(?=,|})/g, ':"$1"');
+                    
+                    // Try to parse the fixed task
+                    try {
+                      const taskObj = JSON.parse(`${fixedTask}`);
+                      if (taskObj && taskObj.taskId) {
+                        // Ensure all required fields have valid values
+                        if (!taskObj.complexityScore) {
+                          taskObj.complexityScore = 5; // Default mid-level complexity
+                        }
+                        if (!taskObj.recommendedSubtasks) {
+                          taskObj.recommendedSubtasks = 3; // Default subtask count
+                        }
+                        complexityAnalysis.push(taskObj);
+                      }
+                    } catch (individualTaskError) {
+                      console.log(chalk.yellow(`Could not parse individual task: ${taskMatch.substring(0, 30)}...`));
+                      
+                      // One last attempt - extract just the taskId and create a minimal object
+                      const idMatch = taskMatch.match(/"taskId"\s*:\s*(\d+)/);
+                      if (idMatch && idMatch[1]) {
+                        const taskId = parseInt(idMatch[1], 10);
+                        const titleMatch = taskMatch.match(/"taskTitle"\s*:\s*"([^"]*)"/);
+                        const title = titleMatch ? titleMatch[1] : `Task ${taskId}`;
+                        
+                        // Create a minimal valid task analysis object
+                        complexityAnalysis.push({
+                          taskId: taskId,
+                          taskTitle: title,
+                          complexityScore: 5,
+                          recommendedSubtasks: 3,
+                          expansionPrompt: `Expand task ${taskId} into appropriate subtasks`,
+                          reasoning: "Analysis data was incomplete - using default values"
+                        });
+                        
+                        console.log(chalk.blue(`Created minimal analysis object for Task ${taskId}`));
+                      }
                     }
                   } catch (taskParseError) {
                     console.log(chalk.yellow(`Could not parse individual task: ${taskMatch.substring(0, 30)}...`));
@@ -4242,6 +4403,22 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
     cleanupSigintHandler();
     
     process.exit(1);
+  } finally {
+    // Always clean up resources, regardless of success or failure
+    cleanupSigintHandler();
+    
+    if (streamingInterval) {
+      clearInterval(streamingInterval);
+      streamingInterval = null;
+    }
+    
+    if (loadingIndicator) {
+      stopLoadingIndicator(loadingIndicator);
+      loadingIndicator = null;
+    }
+    
+    // Clear any terminal artifacts
+    process.stdout.write('\r\x1B[K');
   }
 }
 
