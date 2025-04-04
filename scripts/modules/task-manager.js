@@ -320,14 +320,14 @@ Return only the updated tasks as a valid JSON array.`
               if (originalSigintHandler) originalSigintHandler();
             };
             
-            for await (const chunk of stream) {
+          for await (const chunk of stream) {
               // Check if we should stop processing (SIGINT received)
               if (!isProcessing) {
                 break;
               }
               
-              if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-                responseText += chunk.delta.text;
+            if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+              responseText += chunk.delta.text;
                 chunkCount++;
               }
             }
@@ -2149,14 +2149,14 @@ async function addTask(tasksPath, prompt, dependencies = [], priority = 'medium'
         if (originalSigintHandler) originalSigintHandler();
       };
       
-      for await (const chunk of stream) {
+    for await (const chunk of stream) {
         // Check if we should stop processing (SIGINT received)
         if (!isProcessing) {
           break;
         }
         
-        if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-          fullResponse += chunk.delta.text;
+      if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+        fullResponse += chunk.delta.text;
           chunkCount++;
         }
       }
@@ -2261,6 +2261,10 @@ async function analyzeTaskComplexity(options) {
   
   // Define streamingInterval at the top level of the function so the handler can access it
   let streamingInterval = null;
+  // Track cancellation state
+  let isCancelled = false;
+  // Store original handler to restore later
+  const originalSigintHandler = sigintHandler;
   
   // Add a debug listener at the process level to see if SIGINT is being received
   const debugSignalListener = () => {};
@@ -2271,13 +2275,14 @@ async function analyzeTaskComplexity(options) {
     // Only register if not already registered
     if (!sigintHandler) {
       sigintHandler = () => {
-        log('debug', 'SIGINT handler executing for parsePRD');
+        log('debug', 'SIGINT handler executing for analyzeTaskComplexity');
+        isCancelled = true;
         
         // Try to clear any intervals before exiting
-        if (progressInterval) {
-          clearInterval(progressInterval);
-          progressInterval = null;
-          log('debug', 'Cleared progress interval');
+        if (streamingInterval) {
+          clearInterval(streamingInterval);
+          streamingInterval = null;
+          log('debug', 'Cleared streaming interval');
         }
         
         // Clear any terminal state
@@ -2285,13 +2290,8 @@ async function analyzeTaskComplexity(options) {
         
         console.log(chalk.yellow('\n\nAnalysis cancelled by user.'));
         
-        // Make sure we remove our event listeners before exiting
-        cleanupSigintHandler();
-        
-        // Force exit after giving time for cleanup
-        setTimeout(() => {
-          process.exit(0);
-        }, 100);
+        // DO NOT call process.exit() - this causes SIGABRT in tests
+        // Instead, rely on the isCancelled flag to stop processing
       };
       process.on('SIGINT', sigintHandler);
     }
@@ -2301,17 +2301,19 @@ async function analyzeTaskComplexity(options) {
   const cleanupSigintHandler = () => {
     if (sigintHandler) {
       process.removeListener('SIGINT', sigintHandler);
-      sigintHandler = null;
+      sigintHandler = originalSigintHandler; // Restore original handler if any
     }
     
     // Also remove the debug listener
     process.removeListener('SIGINT', debugSignalListener);
   };
+  
   const thresholdScore = parseFloat(options.threshold || '5');
   const useResearch = options.research || false;
   
   // Initialize error tracking variable
   let apiError = false;
+  let loadingIndicator = null;
   
   try {
     // Read tasks.json
@@ -2325,7 +2327,7 @@ async function analyzeTaskComplexity(options) {
     const prompt = generateComplexityAnalysisPrompt(tasksData);
     
     // Start loading indicator
-    const loadingIndicator = startLoadingIndicator('Calling AI to analyze task complexity...');
+    loadingIndicator = startLoadingIndicator('Calling AI to analyze task complexity...');
     
     let fullResponse = '';
     
@@ -2341,7 +2343,10 @@ async function analyzeTaskComplexity(options) {
           const totalTaskCount = tasksData.tasks.length;
           
           // IMPORTANT: Stop the loading indicator before showing the progress bar
-          stopLoadingIndicator(loadingIndicator);
+          if (loadingIndicator) {
+            stopLoadingIndicator(loadingIndicator);
+            loadingIndicator = null;
+          }
           
           // Set up the progress data
           const progressData = {
@@ -2364,6 +2369,13 @@ async function analyzeTaskComplexity(options) {
           
           // Update progress display at regular intervals
           streamingInterval = setInterval(() => {
+            // Check if cancelled
+            if (isCancelled) {
+              clearInterval(streamingInterval);
+              streamingInterval = null;
+              return;
+            }
+            
             // Update elapsed time
             progressData.elapsed = (Date.now() - startTime) / 1000;
             progressData.percentComplete = Math.min(90, (progressData.elapsed / 30) * 100); // Estimate based on typical 30s completion
@@ -2373,6 +2385,11 @@ async function analyzeTaskComplexity(options) {
             
             displayAnalysisProgress(progressData);
           }, 100);
+          
+          // Exit early if cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
           
           // Modify prompt to include more context for Perplexity and explicitly request JSON
           const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
@@ -2398,6 +2415,11 @@ Your response must be a clean JSON array only, following exactly this format:
 
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
           
+          // Exit early if cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
+          
           const result = await perplexity.chat.completions.create({
             model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
             messages: [
@@ -2413,6 +2435,11 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             temperature: CONFIG.temperature,
             max_tokens: CONFIG.maxTokens,
           });
+          
+          // Exit early if cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
           
           // Extract the response text
           fullResponse = result.choices[0].message.content;
@@ -2430,12 +2457,21 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           progressData.completed = true;
           displayAnalysisProgress(progressData);
           
-          stopLoadingIndicator(loadingIndicator);
-
+          if (loadingIndicator) {
+            stopLoadingIndicator(loadingIndicator);
+            loadingIndicator = null;
+          }
+          
           // Log the first part of the response for debugging
           console.debug(chalk.gray('Response first 200 chars:'));
           console.debug(chalk.gray(fullResponse.substring(0, 200)));
         } catch (perplexityError) {
+          // Check if this was a cancellation
+          if (perplexityError.message === 'Operation cancelled by user') {
+            log('info', 'Perplexity analysis cancelled');
+            throw perplexityError; // Re-throw to exit the function
+          }
+          
           console.error(chalk.yellow('Falling back to Claude for complexity analysis...'));
           console.error(chalk.gray('Perplexity error:'), perplexityError.message);
 
@@ -2444,11 +2480,14 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             clearInterval(streamingInterval);
             streamingInterval = null;
           }
-          cleanupSigintHandler();
           
-          // Continue to Claude as fallback
-          console.log(chalk.yellow('\nFalling back to Claude after Perplexity error: ' + perplexityError.message));
-          await useClaudeForComplexityAnalysis();
+          // Continue to Claude as fallback if not cancelled
+          if (!isCancelled) {
+            console.log(chalk.yellow('\nFalling back to Claude after Perplexity error: ' + perplexityError.message));
+            await useClaudeForComplexityAnalysis();
+          } else {
+            throw new Error('Operation cancelled by user');
+          }
         }
       } else {
         // Use Claude directly if research flag is not set
@@ -2463,91 +2502,133 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
         // Call the LLM API with streaming
         // Add try-catch for better error handling specifically for API call
         try {
+          // Exit early if already cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
+          
           const stream = await anthropic.messages.create({
-          max_tokens: CONFIG.maxTokens,
-          model: modelOverride || CONFIG.model,
-          temperature: CONFIG.temperature,
-          messages: [{ role: "user", content: prompt }],
-          system: "You are an expert software architect and project manager analyzing task complexity. Respond only with valid JSON.",
-          stream: true
-        });
-        
-        // Stop the default loading indicator before showing our custom UI
-        stopLoadingIndicator(loadingIndicator);
-        
-        // Start tracking elapsed time and update information display
-        const startTime = Date.now();
-        const totalTaskCount = tasksData.tasks.length;
-        
-        // Set up the progress data
-        const progressData = {
-          model: modelOverride || CONFIG.model,
-          contextTokens: 0, // Will estimate based on prompt size
-          elapsed: 0,
-          temperature: CONFIG.temperature,
-          tasksAnalyzed: 0,
-          totalTasks: totalTaskCount,
-          percentComplete: 0,
-          maxTokens: CONFIG.maxTokens
-        };
-        
-        // Estimate context tokens (rough approximation - 1 token ~= 4 chars)
-        const estimatedContextTokens = Math.ceil(prompt.length / 4);
-        progressData.contextTokens = estimatedContextTokens;
-        
-        // Display initial progress before streaming begins
-        displayAnalysisProgress(progressData);
-        
-        // Update progress display at regular intervals
-        streamingInterval = setInterval(() => {
-          // Update elapsed time
-          progressData.elapsed = (Date.now() - startTime) / 1000;
+            max_tokens: CONFIG.maxTokens,
+            model: modelOverride || CONFIG.model,
+            temperature: CONFIG.temperature,
+            messages: [{ role: "user", content: prompt }],
+            system: "You are an expert software architect and project manager analyzing task complexity. Respond only with valid JSON.",
+            stream: true
+          });
           
-          // Estimate completion percentage based on response length
-          if (fullResponse.length > 0) {
-            // Estimate based on expected response size (approx. 500 chars per task)
-            const expectedResponseSize = totalTaskCount * 500;
-            const estimatedProgress = Math.min(95, (fullResponse.length / expectedResponseSize) * 100);
-            progressData.percentComplete = estimatedProgress;
-            
-            // Estimate analyzed tasks based on JSON objects found
-            const taskMatches = fullResponse.match(/"taskId"\s*:\s*\d+/g);
-            if (taskMatches) {
-              progressData.tasksAnalyzed = Math.min(totalTaskCount, taskMatches.length);
-            }
+          // Stop the default loading indicator before showing our custom UI
+          if (loadingIndicator) {
+            stopLoadingIndicator(loadingIndicator);
+            loadingIndicator = null;
           }
           
-          // Display the progress information
+          // Start tracking elapsed time and update information display
+          const startTime = Date.now();
+          const totalTaskCount = tasksData.tasks.length;
+          
+          // Set up the progress data
+          const progressData = {
+            model: modelOverride || CONFIG.model,
+            contextTokens: 0, // Will estimate based on prompt size
+            elapsed: 0,
+            temperature: CONFIG.temperature,
+            tasksAnalyzed: 0,
+            totalTasks: totalTaskCount,
+            percentComplete: 0,
+            maxTokens: CONFIG.maxTokens
+          };
+          
+          // Estimate context tokens (rough approximation - 1 token ~= 4 chars)
+          const estimatedContextTokens = Math.ceil(prompt.length / 4);
+          progressData.contextTokens = estimatedContextTokens;
+          
+          // Display initial progress before streaming begins
           displayAnalysisProgress(progressData);
-        }, 100); // Update much more frequently for smoother animation
-        
-        // Process the stream
-        for await (const chunk of stream) {
-          if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-            fullResponse += chunk.delta.text;
+          
+          // Update progress display at regular intervals
+          streamingInterval = setInterval(() => {
+            // Check if cancelled first
+            if (isCancelled) {
+              clearInterval(streamingInterval);
+              streamingInterval = null;
+              return;
+            }
+            
+            // Update elapsed time
+            progressData.elapsed = (Date.now() - startTime) / 1000;
+            
+            // Estimate completion percentage based on response length
+            if (fullResponse.length > 0) {
+              // Estimate based on expected response size (approx. 500 chars per task)
+              const expectedResponseSize = totalTaskCount * 500;
+              const estimatedProgress = Math.min(95, (fullResponse.length / expectedResponseSize) * 100);
+              progressData.percentComplete = estimatedProgress;
+              
+              // Estimate analyzed tasks based on JSON objects found
+              const taskMatches = fullResponse.match(/"taskId"\s*:\s*\d+/g);
+              if (taskMatches) {
+                progressData.tasksAnalyzed = Math.min(totalTaskCount, taskMatches.length);
+              }
+            }
+            
+            // Display the progress information
+            displayAnalysisProgress(progressData);
+          }, 100); // Update much more frequently for smoother animation
+          
+          // Process the stream, with cancellation support
+          try {
+            for await (const chunk of stream) {
+              // Check cancellation status before processing each chunk
+              if (isCancelled) {
+                log('info', 'Streaming cancelled, stopping processing');
+                break;
+              }
+              
+              if (chunk.type === 'content_block_delta' && chunk.delta.text) {
+                fullResponse += chunk.delta.text;
+              }
+            }
+          } catch (streamError) {
+            // Handle stream-specific errors
+            log('error', `Stream processing error: ${streamError.message}`);
+            throw streamError;
           }
-        }
-        
-        // Clean up the interval - stop updating progress
-        if (streamingInterval) {
-          clearInterval(streamingInterval);
-          streamingInterval = null;
-        }
-        
-        // Show completion message immediately
-        progressData.percentComplete = 100;
-        progressData.elapsed = (Date.now() - startTime) / 1000;
-        progressData.tasksAnalyzed = progressData.totalTasks;
-        progressData.completed = true;
-        progressData.contextTokens = Math.max(progressData.contextTokens, estimatedContextTokens); // Ensure the final token count is accurate
-        displayAnalysisProgress(progressData);
-        
-        // Clear the line completely to remove any artifacts (after showing completion)
-        process.stdout.write('\r\x1B[K'); // Clear current line
-        process.stdout.write('\r'); // Move cursor to beginning of line
+          
+          // Clean up the interval - stop updating progress
+          if (streamingInterval) {
+            clearInterval(streamingInterval);
+            streamingInterval = null;
+          }
+          
+          // Exit if cancelled
+          if (isCancelled) {
+            throw new Error('Operation cancelled by user');
+          }
+          
+          // Show completion message immediately
+          progressData.percentComplete = 100;
+          progressData.elapsed = (Date.now() - startTime) / 1000;
+          progressData.tasksAnalyzed = progressData.totalTasks;
+          progressData.completed = true;
+          progressData.contextTokens = Math.max(progressData.contextTokens, estimatedContextTokens); // Ensure the final token count is accurate
+          displayAnalysisProgress(progressData);
+          
+          // Clear the line completely to remove any artifacts (after showing completion)
+          process.stdout.write('\r\x1B[K'); // Clear current line
+          process.stdout.write('\r'); // Move cursor to beginning of line
         } catch (apiError) {
+          // Check if this was a cancellation
+          if (apiError.message === 'Operation cancelled by user') {
+            log('info', 'Claude analysis cancelled');
+            throw apiError; // Re-throw to exit the function
+          }
+          
           // Handle specific API errors here
-          if (streamingInterval) clearInterval(streamingInterval);
+          if (streamingInterval) {
+            clearInterval(streamingInterval);
+            streamingInterval = null;
+          }
+          
           process.stdout.write('\r\x1B[K'); // Clear current line
           
           console.error(chalk.red(`\nAPI Error: ${apiError.message || 'Unknown error'}\n`));
@@ -2556,16 +2637,13 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
           
           // Rethrow to be caught by outer handler
           throw apiError;
-        } finally {
-          // Clean up SIGINT handler
-          cleanupSigintHandler();
-          
-          // Ensure the interval is cleared
-          if (streamingInterval) {
-            clearInterval(streamingInterval);
-            streamingInterval = null;
-          }
         }
+      }
+      
+      // If cancelled at this point, exit before parsing
+      if (isCancelled) {
+        log('info', 'Analysis was cancelled. Not generating report.');
+        return;
       }
       
       // Parse the JSON response
@@ -2601,7 +2679,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
             }
           }
         }
-
+        
         // Log the cleaned response for debugging
         console.debug(chalk.gray("Attempting to parse cleaned JSON..."));
         console.debug(chalk.gray("Cleaned response (first 100 chars):"));
@@ -2793,24 +2871,24 @@ Your response must be a clean JSON array only, following exactly this format:
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
 
               try {
-                const result = await perplexity.chat.completions.create({
-                  model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
-                  messages: [
-                    {
-                      role: "system", 
-                      content: "You are a technical analysis AI that only responds with clean, valid JSON. Never include explanatory text or markdown formatting in your response."
-                    },
-                    {
-                      role: "user",
-                      content: missingTasksResearchPrompt
-                    }
-                  ],
-                  temperature: CONFIG.temperature,
-                  max_tokens: CONFIG.maxTokens,
-                });
-                
-                // Extract the response
-                missingAnalysisResponse = result.choices[0].message.content;
+              const result = await perplexity.chat.completions.create({
+                model: process.env.PERPLEXITY_MODEL || 'sonar-pro',
+                messages: [
+                  {
+                    role: "system", 
+                    content: "You are a technical analysis AI that only responds with clean, valid JSON. Never include explanatory text or markdown formatting in your response."
+                  },
+                  {
+                    role: "user",
+                    content: missingTasksResearchPrompt
+                  }
+                ],
+                temperature: CONFIG.temperature,
+                max_tokens: CONFIG.maxTokens,
+              });
+              
+              // Extract the response
+              missingAnalysisResponse = result.choices[0].message.content;
                 
                 // Stop interval and show completion
                 clearInterval(missingTasksInterval);
@@ -3037,6 +3115,22 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
     cleanupSigintHandler();
     
     process.exit(1);
+  } finally {
+    // Always clean up resources, regardless of success or failure
+    cleanupSigintHandler();
+    
+    if (streamingInterval) {
+      clearInterval(streamingInterval);
+      streamingInterval = null;
+    }
+    
+    if (loadingIndicator) {
+      stopLoadingIndicator(loadingIndicator);
+      loadingIndicator = null;
+    }
+    
+    // Clear any terminal artifacts
+    process.stdout.write('\r\x1B[K');
   }
 }
 
