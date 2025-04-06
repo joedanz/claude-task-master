@@ -587,33 +587,13 @@ Important: Your response must be valid JSON only, with no additional explanation
               }
             }
             
-            // Smart fallback for pre-completion tasks - infer from task position and title
+
+            // REPLACED WITH:
             if (!detectedPriority) {
-              // Look at position in the array and task title to make a good guess
-              const taskTitle = taskInfo.title.toLowerCase();
-              
-              // Keywords that suggest priority levels
-              const highPriorityKeywords = ['setup', 'core', 'essential', 'basic', 'foundation', 'critical', 'key'];
-              const lowPriorityKeywords = ['polish', 'refine', 'optimize', 'enhance', 'improve', 'optional'];
-              
-              // Check for high priority keywords
-              if (taskId <= 3 || highPriorityKeywords.some(keyword => taskTitle.includes(keyword))) {
-                detectedPriority = 'high';
-                prioritySource = 'title_inference';
-                log('debug', `[PRIORITY] Inferred high priority for task ${taskId} based on title keywords or position`);
-              } 
-              // Check for low priority keywords
-              else if (taskId >= 8 || lowPriorityKeywords.some(keyword => taskTitle.includes(keyword))) {
-                detectedPriority = 'low';
-                prioritySource = 'title_inference';
-                log('debug', `[PRIORITY] Inferred low priority for task ${taskId} based on title keywords or position`);
-              } 
-              // Default to medium for anything else
-              else {
-                detectedPriority = 'medium';
-                prioritySource = 'title_inference';
-                log('debug', `[PRIORITY] Assigned medium priority for task ${taskId} based on default inference`);
-              }
+              // Don't use any inference - wait for the actual priority to be available in the stream
+              log('debug', `[PRIORITY] No priority detected for task ${taskId} yet. Will wait for priority to appear in stream.`);
+              // Skip this task for now - we'll detect it in a future iteration when its priority is available
+              continue;
             }
           }
           
@@ -645,36 +625,45 @@ Important: Your response must be valid JSON only, with no additional explanation
             }
           }
           
-          const prevSize = seenTaskIds.size;
-          // Mark this task as seen
-          seenTaskIds.add(taskId);
-          
-          if (seenTaskIds.size > prevSize) {
-            log('debug', `Added task ID ${taskId} to seenTaskIds. Size changed from ${prevSize} to ${seenTaskIds.size}`);
+          // IMPORTANT CHANGE: Only process and emit the task if we have both title AND priority
+          if (taskInfo.title && taskInfo.priority) {
+            const prevSize = seenTaskIds.size;
+            // Mark this task as seen
+            seenTaskIds.add(taskId);
             
-            // We have a new complete task, add it to our tasks
-            newTasks.push(taskInfo);
-            
-            // Update last task time for timing tracking
-            lastTaskTime = Date.now();
-            
-            // ALWAYS set tasksGenerated to match seenTaskIds.size for consistency
-            tasksGenerated = seenTaskIds.size;
-            log('debug', `SYNC: Set tasksGenerated=${tasksGenerated} to match seenTaskIds.size=${seenTaskIds.size}`);
-            
-            // Emit a task event for this new task
-            progress.emitTask({
-              taskId: taskId,
-              title: taskInfo.title || '',
-              priority: taskInfo.priority || 'medium',
-              description: taskInfo.description || '',
-              taskCount: seenTaskIds.size,  // ALWAYS include accurate taskCount
-              _prioritySource: taskInfo._prioritySource || 'unknown' // Add source for debugging
-            });
-            
-            log('debug', `Emitted task event for ID=${taskId}, title="${taskInfo.title?.substring(0, 20)}...", priority="${taskInfo.priority || 'medium'}" (source: ${taskInfo._prioritySource || 'unknown'}), count=${seenTaskIds.size}`);
+            if (seenTaskIds.size > prevSize) {
+              log('debug', `Added task ID ${taskId} to seenTaskIds. Size changed from ${prevSize} to ${seenTaskIds.size}`);
+              
+              // We have a new complete task, add it to our tasks
+              newTasks.push(taskInfo);
+              
+              // Update last task time for timing tracking
+              lastTaskTime = Date.now();
+              
+              // ALWAYS set tasksGenerated to match seenTaskIds.size for consistency
+              tasksGenerated = seenTaskIds.size;
+              log('debug', `SYNC: Set tasksGenerated=${tasksGenerated} to match seenTaskIds.size=${seenTaskIds.size}`);
+              
+              // Emit a task event for this new task with accurate priority
+              progress.emitTask({
+                taskId: taskId,
+                title: taskInfo.title,
+                priority: taskInfo.priority,
+                description: taskInfo.description || '',
+                taskCount: seenTaskIds.size,  // ALWAYS include accurate taskCount
+                _prioritySource: taskInfo._prioritySource || 'unknown' // Add source for debugging
+              });
+              
+              log('debug', `Emitted task event for ID=${taskId}, title="${taskInfo.title?.substring(0, 20)}...", priority="${taskInfo.priority}" (source: ${taskInfo._prioritySource || 'unknown'}), count=${seenTaskIds.size}`);
+            } else {
+              log('debug', `Task ID ${taskId} was already in seenTaskIds, size remains ${seenTaskIds.size}`);
+            }
           } else {
-            log('debug', `Task ID ${taskId} was already in seenTaskIds, size remains ${seenTaskIds.size}`);
+            // We don't have all required information yet - log what's missing
+            const missingInfo = [];
+            if (!taskInfo.title) missingInfo.push('title');
+            if (!taskInfo.priority) missingInfo.push('priority');
+            log('debug', `Task ${taskId} is incomplete, missing: ${missingInfo.join(', ')}. Waiting for complete information.`);
           }
         } else {
           log('debug', `No title found for task ${taskId} yet, may be incomplete`);
