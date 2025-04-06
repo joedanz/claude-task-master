@@ -1759,69 +1759,58 @@ function displayPRDParsingProgress(progressData) {
   // Only print task detection if we have new task info
   if (taskInfo && typeof taskInfo === 'object' && taskInfo.taskId && 
       taskInfo.taskId > displayPRDParsingProgress.lastTaskId) {
-    // Remove extended priority debugging
     
-    // Function to color task titles based on priority
+    // Function to color task titles based on priority (simplified)
     const priorityColor = priority => {
-      // Ensure we properly handle null/undefined/non-string values
-      if (priority === null || priority === undefined) return chalk.yellow;
+      const priorityLower = String(priority || 'medium').toLowerCase();
       
-      // Convert to lowercase string if it's a string
-      const priorityLower = typeof priority === 'string' ? priority.toLowerCase() : String(priority).toLowerCase();
-      
-      // Use explicit matching for priority values
+      // Use consistent color scheme for priorities
       if (priorityLower === 'high') return chalk.hex('#CC0000');
       if (priorityLower === 'medium') return chalk.hex('#FF8800');
       if (priorityLower === 'low') return chalk.green;
       
-      // Default fallback (should rarely be needed)
-      return chalk.yellow;
+      return chalk.yellow; // Default fallback
     };
     
-    // Get the raw priority directly from the task manager
-    const originalPriority = taskInfo.priority;
+    // Get the priority from the task info
+    let priorityToDisplay = 'medium'; // Default to medium
     
-    // Force stringify and validate the priority to ensure consistency
-    let priorityToDisplay;
-    
-    // Override logic was removed previously
-    const overridePriority = null;
-    if (overridePriority) {
-      priorityToDisplay = overridePriority;
-    } 
-    else if (originalPriority !== undefined && originalPriority !== null) {
-      const normalizedPriority = String(originalPriority).toLowerCase();
-      
-      // Strictly validate that it's one of our expected values
+    if (taskInfo.priority) {
+      const normalizedPriority = String(taskInfo.priority).toLowerCase();
+      // Only use valid priority values
       if (['high', 'medium', 'low'].includes(normalizedPriority)) {
         priorityToDisplay = normalizedPriority;
-      } else {
-        // If it's an unexpected value, default to medium
-        priorityToDisplay = 'medium';
       }
-    } else {
-      // Only default to medium if truly missing
-      priorityToDisplay = 'medium';
     }
     
-    // IMPORTANT: Update the taskInfo object for consistency
+    // Update the taskInfo object for consistency
     if (taskInfo.priority !== priorityToDisplay) {
       taskInfo.priority = priorityToDisplay;
     }
     
-    // Remove detailed debugging information for priority handling
-    
     // Write the status line
     process.stdout.write(statusLine);
     
-    // Move to next line and print task detection with proper indentation
-    console.log('\n' + 
-      `  ${chalk.green('✓')} Task ${chalk.bold(taskInfo.taskId)}: ` + 
-      `${priorityColor(priorityToDisplay)(taskInfo.title)} ` + 
-      `${chalk.gray('(' + priorityToDisplay + ' priority)')}`
-    );
+    // Priority visualization with pips
+    const getPriorityPips = priority => {
+      const priorityLower = priority.toLowerCase();
+      
+      if (priorityLower === 'high') {
+        return chalk.hex('#CC0000')('●●●'); // Three red pips for high priority
+      } else if (priorityLower === 'medium') {
+        return chalk.hex('#FF8800')('●●○'); // Two orange pips for medium priority
+      } else if (priorityLower === 'low') {
+        return chalk.green('●○○');  // One green pip for low priority
+      } else {
+        return chalk.yellow('●○○'); // Default fallback
+      }
+    };
     
-    // Remove enhanced debugging about priority values
+    // Move to next line and print task detection with proper indentation and priority pips
+    console.log('\n' + 
+      `  ${chalk.green('✓')} ${getPriorityPips(priorityToDisplay)} ${chalk.bold('Task '+taskInfo.taskId)}: ` + 
+      `${taskInfo.title}`
+    );
     
     // Return cursor to beginning of line for next status update
     process.stdout.write('\r');
