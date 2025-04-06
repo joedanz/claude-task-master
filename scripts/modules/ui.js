@@ -1431,12 +1431,6 @@ function displayPRDParsingProgress(progressData) {
     microProgress = false // Flag to detect micro-progress updates
   } = progressData;
 
-  // Log incoming data for debugging
-  log('debug', `[UI] displayPRDParsingProgress called with: tasksGenerated=${tasksGenerated}, totalTasks=${totalTasks}, microProgress=${microProgress}`);
-  if (taskInfo) {
-    log('debug', `[UI] taskInfo received: ${JSON.stringify(taskInfo)}`);
-  }
-
   // Format the elapsed time
   const timeDisplay = formatElapsedTime(elapsed);
   
@@ -1451,15 +1445,11 @@ function displayPRDParsingProgress(progressData) {
     displayPRDParsingProgress.lastTokenCount = 0; // Track last token count
     displayPRDParsingProgress.actualTaskCount = 0; // Track actual number of tasks generated
     displayPRDParsingProgress.lastThinkingMessage = ''; // Track the last thinking message
-    log('debug', `[UI] displayPRDParsingProgress initialized static variables`);
   }
   
   // For micro-progress updates, we only update the percentage without
   // changing other elements like task counts or thinking state
   if (microProgress && !completed) {
-    // Still log token information for debugging
-    log('debug', `[UI] Token info: promptTokens=${promptTokens}, completionTokens=${completionTokens}`);
-    
     // Create progress bar (20 characters wide)
     const progressBarWidth = 20;
     
@@ -1521,9 +1511,6 @@ function displayPRDParsingProgress(progressData) {
       }
     }
     
-    // Log progress bar composition for debugging
-    log('debug', `[UI] Progress bar: ${smoothPercentComplete.toFixed(1)}%, filled=${filledCount}, empty=${emptyCount}, text added=${textAdded}`);
-    
     // Use spinner from ora
     const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     
@@ -1558,8 +1545,6 @@ function displayPRDParsingProgress(progressData) {
       process.stdout.write(`\r${progressLine}`);
     }
     
-    log('debug', `[UI] Progress update: ${displayPRDParsingProgress.lastPercentComplete.toFixed(1)}% → ${smoothPercentComplete.toFixed(1)}%`);
-    
     // Early return for micro-progress updates after updating the progress bar
     return;
   }
@@ -1568,8 +1553,6 @@ function displayPRDParsingProgress(progressData) {
   
   // Track task info regardless of microProgress flag
   if (taskInfo && typeof taskInfo === 'object' && taskInfo.taskId) {
-    log('debug', `[UI] Processing taskInfo with ID=${taskInfo.taskId}, title="${taskInfo.title?.substring(0, 20)}..."`);
-    
     // Only count each task once by tracking the unique task IDs
     if (!displayPRDParsingProgress.detectedTasks.has(taskInfo.taskId)) {
       // If taskInfo has a taskCount, use that directly
@@ -1578,13 +1561,11 @@ function displayPRDParsingProgress(progressData) {
       } else {
         displayPRDParsingProgress.actualTaskCount += 1;
       }
-      log('debug', `[UI] New task ID ${taskInfo.taskId} detected, actualTaskCount now: ${displayPRDParsingProgress.actualTaskCount}`);
     } else {
       // Even for tasks we've seen, update taskCount if available
       if (taskInfo.taskCount) {
         displayPRDParsingProgress.actualTaskCount = taskInfo.taskCount;
       }
-      log('debug', `[UI] Task ID ${taskInfo.taskId} already seen, not incrementing counter`);
     }
     
     // Store task info in our tracking map
@@ -1596,9 +1577,9 @@ function displayPRDParsingProgress(progressData) {
       taskCount: taskInfo.taskCount
     });
   } else if (microProgress) {
-    log('debug', `[UI] Micro-progress update, skipping task count update`);
+    // Micro-progress update, no task count update needed
   } else if (taskInfo) {
-    log('debug', `[UI] Invalid taskInfo format or missing taskId: ${JSON.stringify(taskInfo)}`);
+    // Invalid taskInfo format or missing taskId
   }
   
   // Create progress bar (20 characters wide)
@@ -1635,7 +1616,6 @@ function displayPRDParsingProgress(progressData) {
   const tokenDisplay = `${promptTokens}/${completionTokens}`;
   
   // Log token information for debugging
-  log('debug', `[UI] Token info: promptTokens=${promptTokens}, completionTokens=${completionTokens}`);
   
   // Update our tracking for reference only
   displayPRDParsingProgress.lastTokenCount = contextTokens;
@@ -1706,7 +1686,6 @@ function displayPRDParsingProgress(progressData) {
   }
   
   // Log progress bar composition for debugging
-  log('debug', `[UI] Progress bar: ${smoothPercentComplete.toFixed(1)}%, filled=${filledCount}, empty=${emptyCount}, text added=${textAdded}`);
   
   // Use spinner from ora
   const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -1780,13 +1759,57 @@ function displayPRDParsingProgress(progressData) {
   // Only print task detection if we have new task info
   if (taskInfo && typeof taskInfo === 'object' && taskInfo.taskId && 
       taskInfo.taskId > displayPRDParsingProgress.lastTaskId) {
+    // Remove extended priority debugging
+    
     // Function to color task titles based on priority
-    const priorityColor = task => {
-      const priority = (task.priority || '').toLowerCase();
-      if (priority === 'high') return chalk.hex('#CC0000');
-      if (priority === 'medium') return chalk.hex('#FF8800');
+    const priorityColor = priority => {
+      // Ensure we properly handle null/undefined/non-string values
+      if (priority === null || priority === undefined) return chalk.yellow;
+      
+      // Convert to lowercase string if it's a string
+      const priorityLower = typeof priority === 'string' ? priority.toLowerCase() : String(priority).toLowerCase();
+      
+      // Use explicit matching for priority values
+      if (priorityLower === 'high') return chalk.hex('#CC0000');
+      if (priorityLower === 'medium') return chalk.hex('#FF8800');
+      if (priorityLower === 'low') return chalk.green;
+      
+      // Default fallback (should rarely be needed)
       return chalk.yellow;
     };
+    
+    // Get the raw priority directly from the task manager
+    const originalPriority = taskInfo.priority;
+    
+    // Force stringify and validate the priority to ensure consistency
+    let priorityToDisplay;
+    
+    // Override logic was removed previously
+    const overridePriority = null;
+    if (overridePriority) {
+      priorityToDisplay = overridePriority;
+    } 
+    else if (originalPriority !== undefined && originalPriority !== null) {
+      const normalizedPriority = String(originalPriority).toLowerCase();
+      
+      // Strictly validate that it's one of our expected values
+      if (['high', 'medium', 'low'].includes(normalizedPriority)) {
+        priorityToDisplay = normalizedPriority;
+      } else {
+        // If it's an unexpected value, default to medium
+        priorityToDisplay = 'medium';
+      }
+    } else {
+      // Only default to medium if truly missing
+      priorityToDisplay = 'medium';
+    }
+    
+    // IMPORTANT: Update the taskInfo object for consistency
+    if (taskInfo.priority !== priorityToDisplay) {
+      taskInfo.priority = priorityToDisplay;
+    }
+    
+    // Remove detailed debugging information for priority handling
     
     // Write the status line
     process.stdout.write(statusLine);
@@ -1794,15 +1817,29 @@ function displayPRDParsingProgress(progressData) {
     // Move to next line and print task detection with proper indentation
     console.log('\n' + 
       `  ${chalk.green('✓')} Task ${chalk.bold(taskInfo.taskId)}: ` + 
-      `${priorityColor(taskInfo)(taskInfo.title)} ` + 
-      `${chalk.gray('(' + (taskInfo.priority || 'medium') + ' priority)')}`
+      `${priorityColor(priorityToDisplay)(taskInfo.title)} ` + 
+      `${chalk.gray('(' + priorityToDisplay + ' priority)')}`
     );
+    
+    // Remove enhanced debugging about priority values
     
     // Return cursor to beginning of line for next status update
     process.stdout.write('\r');
     
     // Update our tracking
     displayPRDParsingProgress.lastTaskId = taskInfo.taskId;
+    
+    // Store the task with its priority in our tracking map
+    if (!displayPRDParsingProgress.detectedTasks) {
+      displayPRDParsingProgress.detectedTasks = new Map();
+    }
+    
+    // Always track the task with the correct priority - but remove unnecessary debug info
+    displayPRDParsingProgress.detectedTasks.set(taskInfo.taskId, {
+      id: taskInfo.taskId,
+      title: taskInfo.title,
+      priority: priorityToDisplay
+    });
   } else {
     // Just write the status line (no new task)
     process.stdout.write(statusLine);  
@@ -1824,9 +1861,6 @@ function displayPRDParsingProgress(progressData) {
     displayPRDParsingProgress.lastPercentComplete = 0;
     displayPRDParsingProgress.lastTokenCount = 0;
     displayPRDParsingProgress.actualTaskCount = 0;
-  } else if (!microProgress && !completed) {
-    // Only log non-micro progress for debugging
-    log('debug', `[UI] Progress update: ${percentComplete.toFixed(1)}% → ${smoothPercentComplete.toFixed(1)}%`);
   }
 }
 

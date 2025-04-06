@@ -306,10 +306,11 @@ async function parsePRD(prdPath, tasksPath, numTasks) {
         title: taskInfo.title,
         priority: taskInfo.priority,
         description: taskInfo.description,
-        taskCount: taskInfo.taskCount
+        taskCount: taskInfo.taskCount,
+        _prioritySource: taskInfo._prioritySource || 'event' // Add source info
       };
       
-      log('debug', `onTask: Updated latestTaskInfo with taskId=${taskInfo.taskId}, title="${taskInfo.title?.substring(0, 20)}..."`);
+      log('debug', `onTask: Updated latestTaskInfo with taskId=${taskInfo.taskId}, title="${taskInfo.title?.substring(0, 20)}...", priority="${taskInfo.priority}", source="${taskInfo._prioritySource || 'event'}"`);
     });
     
     progress.onThinking((data) => {
@@ -466,11 +467,29 @@ Important: Your response must be valid JSON only, with no additional explanation
     
     // Function to detect tasks in the streaming response
     const detectTasks = (content) => {
+      // Enhanced debugging - log a sample of the raw content
+      if (process.env.TRACE === 'true') {
+        // Only show this in TRACE mode as it's very verbose
+        const contentSample = content.substring(content.length - Math.min(1000, content.length));
+        log('debug', `[PRIORITY-TRACE] Recent content sample for detection (last 1000 chars): ${JSON.stringify(contentSample)}`);
+      }
+      
       // Look for task patterns in the buffer using improved regex patterns
       // Match both JSON format and potential partially formed JSON
       const titleRegex = /"title"\s*:\s*"([^"]+)"/g;
       const idRegex = /"id"\s*:\s*(\d+)/g;
-      const priorityRegex = /"priority"\s*:\s*"(high|medium|low)"/gi;
+      
+      // Enhanced priority regex patterns - make these more aggressive
+      // Original pattern was too strict for streaming content
+      const priorityRegexPatterns = [
+        /"priority"\s*:\s*"(high|medium|low)"/gi,
+        /"priority"\s*:\s*(high|medium|low)\b/gi,
+        /priority['"]?\s*:\s*['"]?(high|medium|low)['"]?/gi,
+        /priority\s*:\s*(high|medium|low)\b/gi,
+        /"priority"\s*:\s*["']?(high|medium|low)["']?/gi,
+        /priority\s*[:=]\s*["']?(high|medium|low)["']?/gi
+      ];
+      
       const descriptionRegex = /"description"\s*:\s*"([^"]+)"/g;
       
       let match;
@@ -501,12 +520,12 @@ Important: Your response must be valid JSON only, with no additional explanation
       
       log('debug', `Total unique IDs found: ${foundIds.size}, New tasks to process: ${matchedTasks.size}`);
       
-      // Second pass: find titles for these tasks
+      // Second pass: find titles and priorities for these tasks
       for (const [taskId, taskInfo] of matchedTasks.entries()) {
         const taskStartPos = taskInfo.pos;
         // Search for title after the ID position
         const titleSearch = content.substring(taskStartPos);
-        const titleMatch = titleSearch.match(/"title"\s*:\s*"([^"]+)"/);
+        const titleMatch = titleRegex.exec(titleSearch);
         
         if (titleMatch) {
           // Found title - add to task info
@@ -515,12 +534,93 @@ Important: Your response must be valid JSON only, with no additional explanation
           
           // Search for priority after the ID
           const priorityMatch = titleSearch.match(/"priority"\s*:\s*"(high|medium|low)"/i);
-          if (priorityMatch) {
-            taskInfo.priority = priorityMatch[1].toLowerCase();
-            log('debug', `Found priority for task ${taskId}: ${priorityMatch[1].toLowerCase()}`);
-          } else {
-            taskInfo.priority = 'medium'; // Default priority
+          
+          // Enhanced priority logging and detection
+          let prioritySource = 'default';
+          let detectedPriority = null;
+          
+          // IMPORTANT: Extract context for priority detection debugging
+          if (process.env.TRACE === 'true') {
+            const contextWindow = 500; // Increased context window for better debugging
+            const startPos = Math.max(0, taskStartPos - 50);
+            const endPos = Math.min(content.length, taskStartPos + contextWindow);
+            const taskContext = content.substring(startPos, endPos);
+            log('debug', `[PRIORITY-TRACE] Task ${taskId} context (${startPos}-${endPos}): ${JSON.stringify(taskContext)}`);
           }
+          
+          if (priorityMatch) {
+            detectedPriority = priorityMatch[1].toLowerCase();
+            prioritySource = 'standard_match';
+            log('debug', `[PRIORITY] Found standard priority for task ${taskId}: "${detectedPriority}"`);
+          } else {
+            // Try searching in the whole task JSON object
+            // Extract what looks like the task's JSON object
+            const taskObjectStart = Math.max(0, taskStartPos - 100);
+            const taskObjectEnd = Math.min(content.length, taskStartPos + 500);
+            const taskObjectContext = content.substring(taskObjectStart, taskObjectEnd);
+            
+            // Try multiple alternative patterns
+            const altPatterns = [
+              { pattern: /"priority"\s*:\s*['"]?(high|medium|low)['"]?/i, name: 'quoted_flexible' },
+              { pattern: /priority['"]?\s*:\s*['"]?(high|medium|low)['"]?/i, name: 'unquoted_key' },
+              { pattern: /"priority"\s*:\s*(high|medium|low)\b/i, name: 'unquoted_value' },
+              { pattern: /priority\s*:\s*(high|medium|low)\b/i, name: 'simple_format' },
+              { pattern: /priority\s*[:=]\s*(?:"|')?(\w+)(?:"|')?/i, name: 'any_word_value' }
+            ];
+            
+            // Try each pattern in the task object context
+            for (const { pattern, name } of altPatterns) {
+              const altMatch = taskObjectContext.match(pattern);
+              if (altMatch) {
+                detectedPriority = altMatch[1].toLowerCase();
+                prioritySource = `alt_pattern_${name}`;
+                
+                // Validate if it's a standard priority, otherwise default to 'medium'
+                if (!['high', 'medium', 'low'].includes(detectedPriority)) {
+                  log('debug', `[PRIORITY] Found non-standard priority "${detectedPriority}" for task ${taskId}, defaulting to medium`);
+                  detectedPriority = 'medium';
+                  prioritySource = `normalized_${name}`;
+                } else {
+                  log('debug', `[PRIORITY] Found alternative priority "${detectedPriority}" for task ${taskId} using pattern ${name}`);
+                }
+                break;
+              }
+            }
+            
+            // Smart fallback for pre-completion tasks - infer from task position and title
+            if (!detectedPriority) {
+              // Look at position in the array and task title to make a good guess
+              const taskTitle = taskInfo.title.toLowerCase();
+              
+              // Keywords that suggest priority levels
+              const highPriorityKeywords = ['setup', 'core', 'essential', 'basic', 'foundation', 'critical', 'key'];
+              const lowPriorityKeywords = ['polish', 'refine', 'optimize', 'enhance', 'improve', 'optional'];
+              
+              // Check for high priority keywords
+              if (taskId <= 3 || highPriorityKeywords.some(keyword => taskTitle.includes(keyword))) {
+                detectedPriority = 'high';
+                prioritySource = 'title_inference';
+                log('debug', `[PRIORITY] Inferred high priority for task ${taskId} based on title keywords or position`);
+              } 
+              // Check for low priority keywords
+              else if (taskId >= 8 || lowPriorityKeywords.some(keyword => taskTitle.includes(keyword))) {
+                detectedPriority = 'low';
+                prioritySource = 'title_inference';
+                log('debug', `[PRIORITY] Inferred low priority for task ${taskId} based on title keywords or position`);
+              } 
+              // Default to medium for anything else
+              else {
+                detectedPriority = 'medium';
+                prioritySource = 'title_inference';
+                log('debug', `[PRIORITY] Assigned medium priority for task ${taskId} based on default inference`);
+              }
+            }
+          }
+          
+          // Set the priority with detailed logging
+          taskInfo.priority = detectedPriority;
+          taskInfo._prioritySource = prioritySource; // Store source for debugging
+          log('debug', `[PRIORITY] Set priority for task ${taskId} to "${taskInfo.priority}" (source: ${prioritySource})`);
           
           // Look for description if available
           const descriptionMatch = titleSearch.match(/"description"\s*:\s*"([^"]+)"/);
@@ -568,10 +668,11 @@ Important: Your response must be valid JSON only, with no additional explanation
               title: taskInfo.title || '',
               priority: taskInfo.priority || 'medium',
               description: taskInfo.description || '',
-              taskCount: seenTaskIds.size  // ALWAYS include accurate taskCount
+              taskCount: seenTaskIds.size,  // ALWAYS include accurate taskCount
+              _prioritySource: taskInfo._prioritySource || 'unknown' // Add source for debugging
             });
             
-            log('debug', `Emitted task event for ID=${taskId}, title="${taskInfo.title?.substring(0, 20)}...", count=${seenTaskIds.size}`);
+            log('debug', `Emitted task event for ID=${taskId}, title="${taskInfo.title?.substring(0, 20)}...", priority="${taskInfo.priority || 'medium'}" (source: ${taskInfo._prioritySource || 'unknown'}), count=${seenTaskIds.size}`);
           } else {
             log('debug', `Task ID ${taskId} was already in seenTaskIds, size remains ${seenTaskIds.size}`);
           }
