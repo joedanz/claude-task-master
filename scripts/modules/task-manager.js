@@ -4014,8 +4014,8 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 								);
 							}
 
-							// Show progress at 40% between retries
-							reportLog({ percentComplete: 40 }, 'progress');
+							// Log retry attempt without resetting progress percentage
+							reportLog(`Retrying due to Claude overload (attempt ${retryAttempt}/${maxRetryAttempts})`, 'info');
 
 							// Wait a bit before retrying - add progressive backoff delay
 							const retryDelay = 1000 * retryAttempt; // Increases with each retry
