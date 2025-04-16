@@ -4017,11 +4017,38 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							// Show progress at 40% between retries
 							reportLog({ percentComplete: 40 }, 'progress');
 
-							// Wait a bit before retrying
-							await new Promise((resolve) => setTimeout(resolve, 2000));
+							// Wait a bit before retrying - add progressive backoff delay
+							const retryDelay = 1000 * retryAttempt; // Increases with each retry
+							reportLog(
+								`Waiting ${retryDelay / 1000} seconds before retry...`,
+								'info'
+							);
+
+							// Only show UI elements for text output (CLI)
+							if (outputFormat === 'text') {
+								console.log(
+									chalk.blue(
+										`Waiting ${retryDelay / 1000} seconds before retry...`
+									)
+								);
+							}
+
+							await new Promise((resolve) => setTimeout(resolve, retryDelay));
 						} else {
-							// Not an overload error, just rethrow
-							throw claudeError;
+							// Non-overload error - don't retry
+							reportLog(
+								`Non-overload Claude API error: ${claudeError.message}`,
+								'error'
+							);
+
+							// Only show UI elements for text output (CLI)
+							if (outputFormat === 'text') {
+								console.log(
+									chalk.red(`Claude API error: ${claudeError.message}`)
+								);
+							}
+
+							throw claudeError; // Let the outer error handling take care of it
 						}
 					}
 				}
