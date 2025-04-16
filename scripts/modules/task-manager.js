@@ -3572,12 +3572,16 @@ async function analyzeTaskComplexity(
 
 	// Variables for tracking progress
 	let startTime = Date.now();
-	let modelName = modelOverride || CONFIG.model || session?.env?.ANTHROPIC_MODEL || 'claude-3-sonnet';
+	let modelName =
+		modelOverride ||
+		CONFIG.model ||
+		session?.env?.ANTHROPIC_MODEL ||
+		'claude-3-sonnet';
 	let contextTokens = 0;
 	let tasksAnalyzed = 0;
 	let totalTasks = 0;
 	let maxTokens = session?.env?.MAX_TOKENS || CONFIG.maxTokens;
-	
+
 	// Create custom reporter that checks for MCP log and silent mode
 	const reportLog = (message, level = 'info') => {
 		if (mcpLog) {
@@ -3586,7 +3590,7 @@ async function analyzeTaskComplexity(
 			// Only log to console if not in silent mode and outputFormat is 'text'
 			log(level, message);
 		}
-		
+
 		// Update progress display for UI if appropriate
 		const elapsedSeconds = (Date.now() - startTime) / 1000;
 		if (level === 'progress' && outputFormat === 'text' && !isSilentMode()) {
@@ -3696,7 +3700,7 @@ async function analyzeTaskComplexity(
 
 		// Prepare the prompt for the LLM
 		const prompt = generateComplexityAnalysisPrompt(tasksData);
-		
+
 		// Update contextTokens for progress display
 		contextTokens = prompt.length / 3; // Rough estimate of token count
 
@@ -3898,12 +3902,16 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							if (chunk.type === 'content_block_delta' && chunk.delta.text) {
 								fullResponse += chunk.delta.text;
 								responseLength += chunk.delta.text.length;
-								
+
 								// Calculate rough percentage based on estimated length
-								const percentComplete = Math.min(95, 30 + (responseLength / estimatedTotalLength) * 65);
-								
+								const percentComplete = Math.min(
+									95,
+									30 + (responseLength / estimatedTotalLength) * 65
+								);
+
 								// Update progress
-								if (responseLength % 500 === 0) {  // Update periodically to avoid too many updates
+								if (responseLength % 500 === 0) {
+									// Update periodically to avoid too many updates
 									reportLog({ percentComplete }, 'progress');
 								}
 							}
@@ -4008,7 +4016,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 							// Show progress at 40% between retries
 							reportLog({ percentComplete: 40 }, 'progress');
-							
+
 							// Wait a bit before retrying
 							await new Promise((resolve) => setTimeout(resolve, 2000));
 						} else {
