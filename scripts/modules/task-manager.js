@@ -35,7 +35,9 @@ import {
 	getComplexityWithColor,
 	startLoadingIndicator,
 	stopLoadingIndicator,
-	createProgressBar
+	createProgressBar,
+	displayAnalysisProgress,
+	formatComplexitySummary
 } from './ui.js';
 
 import {
@@ -3568,6 +3570,14 @@ async function analyzeTaskComplexity(
 	// Determine output format based on mcpLog presence (simplification)
 	const outputFormat = mcpLog ? 'json' : 'text';
 
+	// Variables for tracking progress
+	let startTime = Date.now();
+	let modelName = modelOverride || CONFIG.model || session?.env?.ANTHROPIC_MODEL || 'claude-3-sonnet';
+	let contextTokens = 0;
+	let tasksAnalyzed = 0;
+	let totalTasks = 0;
+	let maxTokens = session?.env?.MAX_TOKENS || CONFIG.maxTokens;
+	
 	// Create custom reporter that checks for MCP log and silent mode
 	const reportLog = (message, level = 'info') => {
 		if (mcpLog) {
@@ -3575,6 +3585,22 @@ async function analyzeTaskComplexity(
 		} else if (!isSilentMode() && outputFormat === 'text') {
 			// Only log to console if not in silent mode and outputFormat is 'text'
 			log(level, message);
+		}
+		
+		// Update progress display for UI if appropriate
+		const elapsedSeconds = (Date.now() - startTime) / 1000;
+		if (level === 'progress' && outputFormat === 'text' && !isSilentMode()) {
+			displayAnalysisProgress({
+				model: modelName,
+				contextTokens,
+				elapsed: elapsedSeconds,
+				temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+				tasksAnalyzed,
+				totalTasks,
+				percentComplete: message.percentComplete || 0,
+				maxTokens,
+				completed: message.completed || false
+			});
 		}
 	};
 
@@ -3647,6 +3673,9 @@ async function analyzeTaskComplexity(
 			};
 		}
 
+		// Set totalTasks for progress reporting
+		totalTasks = tasksData.tasks.length;
+
 		// Calculate how many tasks we're skipping (done/cancelled/deferred)
 		const skippedCount = originalTaskCount - tasksData.tasks.length;
 
@@ -3667,6 +3696,9 @@ async function analyzeTaskComplexity(
 
 		// Prepare the prompt for the LLM
 		const prompt = generateComplexityAnalysisPrompt(tasksData);
+		
+		// Update contextTokens for progress display
+		contextTokens = prompt.length / 3; // Rough estimate of token count
 
 		// Only start loading indicator for text output (CLI)
 		let loadingIndicator = null;
@@ -3697,6 +3729,9 @@ async function analyzeTaskComplexity(
 						);
 					}
 
+					// Update progress display with initial info (15% complete)
+					reportLog({ percentComplete: 15 }, 'progress');
+
 					// Modify prompt to include more context for Perplexity and explicitly request JSON
 					const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
 
@@ -3721,6 +3756,9 @@ Your response must be a clean JSON array only, following exactly this format:
 
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
 
+					// Update progress to 25%
+					reportLog({ percentComplete: 25 }, 'progress');
+
 					const result = await perplexity.chat.completions.create({
 						model:
 							process.env.PERPLEXITY_MODEL ||
@@ -3740,6 +3778,9 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
 						max_tokens: session?.env?.MAX_TOKENS || CONFIG.maxTokens
 					});
+
+					// Update progress to 80% after receiving response
+					reportLog({ percentComplete: 80 }, 'progress');
 
 					// Extract the response text
 					fullResponse = result.choices[0].message.content;
@@ -3821,6 +3862,9 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							);
 						}
 
+						// Show 30% progress for starting Claude call
+						reportLog({ percentComplete: 30 }, 'progress');
+
 						// Call the LLM API with streaming
 						const stream = await anthropic.messages.create({
 							max_tokens: session?.env?.MAX_TOKENS || CONFIG.maxTokens,
@@ -3845,10 +3889,23 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							}, 500);
 						}
 
+						// Variables to track streaming progress for UI
+						let responseLength = 0;
+						const estimatedTotalLength = totalTasks * 200; // Rough estimate
+
 						// Process the stream
 						for await (const chunk of stream) {
 							if (chunk.type === 'content_block_delta' && chunk.delta.text) {
 								fullResponse += chunk.delta.text;
+								responseLength += chunk.delta.text.length;
+								
+								// Calculate rough percentage based on estimated length
+								const percentComplete = Math.min(95, 30 + (responseLength / estimatedTotalLength) * 65);
+								
+								// Update progress
+								if (responseLength % 500 === 0) {  // Update periodically to avoid too many updates
+									reportLog({ percentComplete }, 'progress');
+								}
 							}
 							if (reportProgress) {
 								await reportProgress({
@@ -3949,39 +4006,14 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 								);
 							}
 
-							// Wait a bit before retrying - adds backoff delay
-							const retryDelay = 1000 * retryAttempt; // Increases with each retry
-							reportLog(
-								`Waiting ${retryDelay / 1000} seconds before retry...`,
-								'info'
-							);
-
-							// Only show UI elements for text output (CLI)
-							if (outputFormat === 'text') {
-								console.log(
-									chalk.blue(
-										`Waiting ${retryDelay / 1000} seconds before retry...`
-									)
-								);
-							}
-
-							await new Promise((resolve) => setTimeout(resolve, retryDelay));
-							continue; // Try again
+							// Show progress at 40% between retries
+							reportLog({ percentComplete: 40 }, 'progress');
+							
+							// Wait a bit before retrying
+							await new Promise((resolve) => setTimeout(resolve, 2000));
 						} else {
-							// Non-overload error - don't retry
-							reportLog(
-								`Non-overload Claude API error: ${claudeError.message}`,
-								'error'
-							);
-
-							// Only show UI elements for text output (CLI)
-							if (outputFormat === 'text') {
-								console.log(
-									chalk.red(`Claude API error: ${claudeError.message}`)
-								);
-							}
-
-							throw claudeError; // Let the outer error handling take care of it
+							// Not an overload error, just rethrow
+							throw claudeError;
 						}
 					}
 				}
@@ -4382,6 +4414,24 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					console.log(
 						`\nSee ${outputPath} for the full report and expansion commands.`
 					);
+
+					// Create a simple report summary object for formatting
+					const summary = {
+						totalTasks: originalTaskCount,
+						analyzedTasks: complexityAnalysis.length,
+						highComplexityCount: highComplexity,
+						mediumComplexityCount: mediumComplexity,
+						lowComplexityCount: lowComplexity,
+						researchBacked: useResearch
+					};
+
+					// Mark the analysis as complete with 100% progress
+					reportLog({ percentComplete: 100, completed: true }, 'progress');
+
+					// Display formatted summary if using text output format
+					if (outputFormat === 'text') {
+						console.log(formatComplexitySummary(summary));
+					}
 
 					// Show next steps suggestions
 					console.log(
