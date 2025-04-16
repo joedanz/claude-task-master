@@ -706,25 +706,47 @@ function registerCommands(programInstance) {
 	// analyze-complexity command
 	programInstance
 		.command('analyze-complexity')
-		.description(`Analyze tasks and generate expansion recommendations${chalk.reset('')}`)
-		.option('-o, --output <file>', 'Output file path for the report', 'scripts/task-complexity-report.json')
-		.option('-m, --model <model>', 'LLM model to use for analysis (defaults to configured model)')
-		.option('-t, --threshold <number>', 'Minimum complexity score to recommend expansion (1-10)', '5')
+		.description(
+			`Analyze tasks and generate expansion recommendations${chalk.reset('')}`
+		)
+		.option(
+			'-o, --output <file>',
+			'Output file path for the report',
+			'scripts/task-complexity-report.json'
+		)
+		.option(
+			'-m, --model <model>',
+			'LLM model to use for analysis (defaults to configured model)'
+		)
+		.option(
+			'-t, --threshold <number>',
+			'Minimum complexity score to recommend expansion (1-10)',
+			'5'
+		)
 		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
-		.option('-r, --research', 'Use Perplexity AI for research-backed complexity analysis')
+		.option(
+			'-r, --research',
+			'Use Perplexity AI for research-backed complexity analysis'
+		)
 		.action(async (options) => {
 			const tasksPath = options.file || 'tasks/tasks.json';
 			const outputPath = options.output;
 			const modelOverride = options.model;
 			const thresholdScore = parseFloat(options.threshold);
 			const useResearch = options.research || false;
-			
+
 			console.log(chalk.blue(`Analyzing task complexity from: ${tasksPath}`));
 			console.log(chalk.blue(`Output report will be saved to: ${outputPath}`));
 
 			// Call the dedicated UI function to display complexity analysis start information
-			displayComplexityAnalysisStart(tasksPath, outputPath, useResearch, modelOverride || CONFIG.model, CONFIG.temperature);
-			
+			displayComplexityAnalysisStart(
+				tasksPath,
+				outputPath,
+				useResearch,
+				modelOverride || CONFIG.model,
+				CONFIG.temperature
+			);
+
 			if (useResearch) {
 				console.log(
 					chalk.blue(
