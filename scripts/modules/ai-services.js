@@ -706,23 +706,18 @@ What are current best practices, libraries, design patterns, and implementation 
 Include concrete code examples and technical considerations where relevant.`;
 
 		// Query Perplexity for research
-		let researchResult = '';
-			const researchStream = await perplexityClient.chat.completions.create({
-				model: PERPLEXITY_MODEL,
-				messages: [
-					{
-						role: 'user',
-						content: researchQuery
-					}
-				],
-				temperature: 0.1, // Lower temperature for more factual responses
-				stream: true
-			});
-			for await (const chunk of researchStream) {
-				if (chunk.choices && chunk.choices[0].delta && chunk.choices[0].delta.content) {
-					researchResult += chunk.choices[0].delta.content;
+		const researchResponse = await perplexityClient.chat.completions.create({
+			model: PERPLEXITY_MODEL,
+			messages: [
+				{
+					role: 'user',
+					content: researchQuery
 				}
-			}
+			],
+			temperature: 0.1 // Lower temperature for more factual responses
+		});
+
+		const researchResult = researchResponse.choices[0].message.content;
 
 		// Only stop loading indicator if it was created
 		if (researchLoadingIndicator) {
@@ -1325,23 +1320,18 @@ What are current best practices, libraries, design patterns, and implementation 
 Include concrete code examples and technical considerations where relevant.`;
 
 		// Query Perplexity for research
-		let researchResult = '';
-			const researchStream = await perplexityClient.chat.completions.create({
-				model: PERPLEXITY_MODEL,
-				messages: [
-					{
-						role: 'user',
-						content: researchQuery
-					}
-				],
-				temperature: 0.1, // Lower temperature for more factual responses
-				stream: true
-			});
-			for await (const chunk of researchStream) {
-				if (chunk.choices && chunk.choices[0].delta && chunk.choices[0].delta.content) {
-					researchResult += chunk.choices[0].delta.content;
+		const researchResponse = await perplexityClient.chat.completions.create({
+			model: PERPLEXITY_MODEL,
+			messages: [
+				{
+					role: 'user',
+					content: researchQuery
 				}
-			}
+			],
+			temperature: 0.1 // Lower temperature for more factual responses
+		});
+
+		const researchResult = researchResponse.choices[0].message.content;
 
 		stopLoadingIndicator(researchLoadingIndicator);
 		log('info', 'Research completed, now generating detailed task description');
