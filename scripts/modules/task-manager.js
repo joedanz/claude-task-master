@@ -3621,19 +3621,7 @@ async function analyzeTaskComplexity(
 		}
 	};
 
-	// Only show UI elements for text output (CLI)
-	if (outputFormat === 'text') {
-		console.log(
-			chalk.blue(
-				`Analyzing task complexity and generating expansion recommendations...`
-			)
-		);
-	}
-
 	try {
-		// Read tasks.json
-		reportLog(`Reading tasks from ${tasksPath}...`, 'info');
-	
 		// Use either the filtered tasks data provided by the direct function or read from file
 		let tasksData;
 		let originalTaskCount = 0;
@@ -3695,11 +3683,6 @@ async function analyzeTaskComplexity(
 
 		// Calculate how many tasks we're skipping (done/cancelled/deferred)
 		const skippedCount = originalTaskCount - tasksData.tasks.length;
-
-		reportLog(
-			`Found ${originalTaskCount} total tasks in the task file.`,
-			'info'
-		);
 
 		if (skippedCount > 0) {
 			const skipMessage = `Skipping ${skippedCount} tasks marked as done/cancelled/deferred. Analyzing ${tasksData.tasks.length} active tasks.`;
@@ -3906,11 +3889,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					const isLastAttempt = retryAttempt >= maxRetryAttempts;
 
 					try {
-						// Set up loading indicator before we start the progress bar
-						reportLog(
-							`Claude API attempt ${retryAttempt}/${maxRetryAttempts}`,
-							'info'
-						);
 
 						// Update loading indicator for CLI
 						if (outputFormat === 'text' && loadingIndicator) {
@@ -4600,7 +4578,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 				};
 
 				// Write the report to file
-				reportLog(`Writing complexity report to ${outputPath}...`, 'info');
+				reportLog(` to ${outputPath}...`, 'info');
 				writeJSON(outputPath, finalReport);
 
 				reportLog(
