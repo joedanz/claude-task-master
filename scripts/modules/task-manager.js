@@ -1370,7 +1370,7 @@ function generateTaskFiles(tasksPath, outputDir, options = {}) {
 		// Determine if we're in MCP mode by checking for mcpLog
 		const isMcpMode = !!options?.mcpLog;
 
-		log('info', `Reading tasks from ${tasksPath}...`);
+		log('debug', `Reading tasks from ${tasksPath}...`);
 
 		const data = readJSON(tasksPath);
 		if (!data || !data.tasks) {
@@ -1532,7 +1532,7 @@ async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
 			);
 		}
 
-		log('info', `Reading tasks from ${tasksPath}...`);
+		log('debug', `Reading tasks from ${tasksPath}...`);
 		const data = readJSON(tasksPath);
 		if (!data || !data.tasks) {
 			throw new Error(`No valid tasks found in ${tasksPath}`);
@@ -2993,7 +2993,7 @@ async function expandAllTasks(
 function clearSubtasks(tasksPath, taskIds) {
 	displayBanner();
 
-	log('info', `Reading tasks from ${tasksPath}...`);
+	log('debug', `Reading tasks from ${tasksPath}...`);
 	const data = readJSON(tasksPath);
 	if (!data || !data.tasks) {
 		log('error', 'No valid tasks found.');
@@ -3588,12 +3588,20 @@ async function analyzeTaskComplexity(
 			mcpLog[level](message);
 		} else if (!isSilentMode() && outputFormat === 'text') {
 			// Only log to console if not in silent mode and outputFormat is 'text'
-			log(level, message);
+			// Don't log progress messages as raw JSON - they'll be displayed as a progress bar instead
+			if (level !== 'progress') {
+				log(level, message);
+			}
 		}
 
 		// Update progress display for UI if appropriate
 		const elapsedSeconds = (Date.now() - startTime) / 1000;
 		if (level === 'progress' && outputFormat === 'text' && !isSilentMode()) {
+			// Clear any existing loading indicator before displaying progress
+			if (message.percentComplete === 0) {
+				process.stdout.write('\r\x1B[K'); // Clear the current line
+			}
+			
 			displayAnalysisProgress({
 				model: modelName,
 				contextTokens,
@@ -3605,6 +3613,11 @@ async function analyzeTaskComplexity(
 				maxTokens,
 				completed: message.completed || false
 			});
+			
+			// Force flush stdout to ensure terminal updates immediately
+			if (process.stdout.isTTY && typeof process.stdout.flush === 'function') {
+				process.stdout.flush();
+			}
 		}
 	};
 
@@ -3620,7 +3633,7 @@ async function analyzeTaskComplexity(
 	try {
 		// Read tasks.json
 		reportLog(`Reading tasks from ${tasksPath}...`, 'info');
-
+	
 		// Use either the filtered tasks data provided by the direct function or read from file
 		let tasksData;
 		let originalTaskCount = 0;
@@ -3700,7 +3713,7 @@ async function analyzeTaskComplexity(
 
 		// Prepare the prompt for the LLM
 		const prompt = generateComplexityAnalysisPrompt(tasksData);
-
+		
 		// Update contextTokens for progress display
 		contextTokens = prompt.length / 3; // Rough estimate of token count
 
@@ -3733,9 +3746,6 @@ async function analyzeTaskComplexity(
 						);
 					}
 
-					// Update progress display with initial info (15% complete)
-					reportLog({ percentComplete: 15 }, 'progress');
-
 					// Modify prompt to include more context for Perplexity and explicitly request JSON
 					const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
 
@@ -3760,9 +3770,6 @@ Your response must be a clean JSON array only, following exactly this format:
 
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
 
-					// Update progress to 25%
-					reportLog({ percentComplete: 25 }, 'progress');
-
 					const result = await perplexity.chat.completions.create({
 						model:
 							process.env.PERPLEXITY_MODEL ||
@@ -3782,9 +3789,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
 						max_tokens: session?.env?.MAX_TOKENS || CONFIG.maxTokens
 					});
-
-					// Update progress to 80% after receiving response
-					reportLog({ percentComplete: 80 }, 'progress');
 
 					// Extract the response text
 					fullResponse = result.choices[0].message.content;
@@ -3812,8 +3816,8 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 					// ALWAYS log the first part of the response for debugging
 					if (outputFormat === 'text') {
-						console.log(chalk.gray('Response first 200 chars:'));
-						console.log(chalk.gray(fullResponse.substring(0, 200)));
+						console.debug(chalk.gray('Response first 200 chars:'));
+						console.debug(chalk.gray(fullResponse.substring(0, 200)));
 					}
 				} catch (perplexityError) {
 					reportLog(
@@ -3846,6 +3850,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 				let retryAttempt = 0;
 				const maxRetryAttempts = 2;
 				let claudeOverloaded = false;
+				let progressBarStarted = false;
 
 				// Retry loop for Claude API calls
 				while (retryAttempt < maxRetryAttempts) {
@@ -3853,6 +3858,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					const isLastAttempt = retryAttempt >= maxRetryAttempts;
 
 					try {
+						// Set up loading indicator before we start the progress bar
 						reportLog(
 							`Claude API attempt ${retryAttempt}/${maxRetryAttempts}`,
 							'info'
@@ -3866,8 +3872,36 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							);
 						}
 
-						// Show 30% progress for starting Claude call
-						reportLog({ percentComplete: 30 }, 'progress');
+						// Show streaming indicator only if progress bar hasn't started
+						if (outputFormat === 'text' && !progressBarStarted) {
+							let dotCount = 0;
+							streamingInterval = setInterval(() => {
+									readline.cursorTo(process.stdout, 0);
+									process.stdout.write(
+										`Receiving streaming response from Claude${'.'.repeat(dotCount)}`
+									);
+									dotCount = (dotCount + 1) % 4;
+								}, 500);
+						}
+
+						// Always start the progress bar at 0% before calling Claude API
+						if (streamingInterval) {
+							clearInterval(streamingInterval);
+							streamingInterval = null;
+							// Clear the line so the progress bar can take over
+							const readline = await import('readline');
+							readline.cursorTo(process.stdout, 0);
+							process.stdout.clearLine(0);
+						}
+						
+						// Make sure any loading indicator is completely stopped before showing progress
+						if (loadingIndicator) {
+							stopLoadingIndicator(loadingIndicator);
+							loadingIndicator = null;
+						}
+						
+						reportLog({ percentComplete: 0 }, 'progress');
+						progressBarStarted = true;
 
 						// Call the LLM API with streaming
 						const stream = await anthropic.messages.create({
@@ -3881,8 +3915,10 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							stream: true
 						});
 
-						// Update loading indicator to show streaming progress - only for text output (CLI)
-						if (outputFormat === 'text') {
+						// The progress bar is already started, so we don't need this second streaming indicator
+						// Keeping commented for now in case we need to restore it later
+						/* 
+						if (outputFormat === 'text' && !progressBarStarted) {
 							let dotCount = 0;
 							streamingInterval = setInterval(() => {
 								readline.cursorTo(process.stdout, 0);
@@ -3892,38 +3928,128 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 								dotCount = (dotCount + 1) % 4;
 							}, 500);
 						}
+						*/
 
 						// Variables to track streaming progress for UI
 						let responseLength = 0;
 						const estimatedTotalLength = totalTasks * 200; // Rough estimate
+						
+						// Task tracking variables for real-time progress detection
+						let taskCompletionBuffer = '';
+						let completedTaskCount = 0;
+						let bracketCount = 0;
+						let inTaskObject = false;
+						// Make the taskId pattern more specific to avoid false positives
+						// This captures only valid JSON property format for taskId with exact format and comma or closing brace
+						const taskIdPattern = /"taskId"\s*:\s*(\d+)(?=\s*,|\s*})/g;
+                        
+                        // Create a set to track seen task IDs to avoid duplicates
+                        const seenTaskIds = new Set();
 
 						// Process the stream
 						for await (const chunk of stream) {
 							if (chunk.type === 'content_block_delta' && chunk.delta.text) {
-								fullResponse += chunk.delta.text;
-								responseLength += chunk.delta.text.length;
+								const chunkText = chunk.delta.text;
+								fullResponse += chunkText;
+								responseLength += chunkText.length;
 
-								// Calculate rough percentage based on estimated length
-								const percentComplete = Math.min(
-									95,
-									30 + (responseLength / estimatedTotalLength) * 65
-								);
+								// Add to task completion buffer for parsing
+								taskCompletionBuffer += chunkText;
+								
+								// Debug logging (only in debug mode)
+								if (CONFIG.debug && outputFormat === 'text') {
+									process.stdout.write('\n[DEBUG] Chunk received: ' + chunkText.replace(/\n/g, '\\n').substring(0, 50));
+								}
 
-								// Update progress
-								if (responseLength % 500 === 0) {
-									// Update periodically to avoid too many updates
-									reportLog({ percentComplete }, 'progress');
+								// Task detection algorithm: count brackets and detect task objects
+								// Track opening and closing brackets to identify complete JSON objects
+								for (let i = 0; i < chunkText.length; i++) {
+									const char = chunkText[i];
+									
+									if (char === '{') {
+										bracketCount++;
+										if (bracketCount === 1 && !inTaskObject) {
+											inTaskObject = true;
+										}
+									} else if (char === '}') {
+										bracketCount--;
+										// When we have a balanced set of brackets and we were tracking a task object,
+										// we've likely completed a task
+										if (bracketCount === 0 && inTaskObject) {
+											// We've detected a full task object
+											completedTaskCount++;
+											inTaskObject = false;
+											
+											// Ensure we don't count more tasks than total
+											if (completedTaskCount > totalTasks) {
+												completedTaskCount = totalTasks;
+											}
+											
+											// Log task completion for debugging
+											if (CONFIG.debug && outputFormat === 'text') {
+												process.stdout.write(`\n[DEBUG] Detected task completion #${completedTaskCount}/${totalTasks}`);
+											}
+											
+											// Reset buffer after parsing a complete task to prevent memory buildup
+											taskCompletionBuffer = '';
+											
+											// Update progress with actual task counts
+											tasksAnalyzed = completedTaskCount;
+											const taskPercentComplete = Math.min(95, (completedTaskCount / totalTasks) * 100);
+											
+											// Update the progress display with real task count data
+											reportLog({
+												percentComplete: taskPercentComplete,
+												totalTasks: totalTasks,
+												tasksAnalyzed: completedTaskCount
+											}, 'progress');
 								}
 							}
-							if (reportProgress) {
-								await reportProgress({
-									progress: (fullResponse.length / CONFIG.maxTokens) * 100
+								}
+								
+								// Also look for taskId patterns as backup detection method
+								// This helps when bracket counting might be unreliable
+								const taskIdMatches = [...taskCompletionBuffer.matchAll(taskIdPattern)];
+								
+								// Count unique task IDs
+								taskIdMatches.forEach(match => {
+									const taskId = match[1];
+									if (!seenTaskIds.has(taskId)) {
+										seenTaskIds.add(taskId);
+										
+										if (CONFIG.debug && outputFormat === 'text') {
+											process.stdout.write(`\n[DEBUG] Found new taskId: ${taskId}`);
+										}
+									}
 								});
+								
+								// If we found more unique tasks than our bracket counting detected
+								if (seenTaskIds.size > completedTaskCount) {
+									// Found more taskIds than our bracket counting detected
+									const newCount = Math.min(seenTaskIds.size, totalTasks); // Never exceed total
+									
+									if (CONFIG.debug && outputFormat === 'text') {
+										process.stdout.write(`\n[DEBUG] taskId detection found ${seenTaskIds.size} tasks, bracket counting found ${completedTaskCount}`);
 							}
-							if (mcpLog) {
-								mcpLog.info(
-									`Progress: ${(fullResponse.length / CONFIG.maxTokens) * 100}%`
-								);
+									
+									// Update to the higher count, but never exceed totalTasks
+									if (newCount > completedTaskCount) {
+										completedTaskCount = newCount;
+										tasksAnalyzed = completedTaskCount;
+										const taskPercentComplete = Math.min(95, (completedTaskCount / totalTasks) * 100);
+										
+										reportLog({
+											percentComplete: taskPercentComplete,
+											totalTasks: totalTasks,
+											tasksAnalyzed: completedTaskCount
+										}, 'progress');
+									}
+								}
+								
+								// Trim buffer if it gets too large to prevent memory issues
+								if (taskCompletionBuffer.length > 10000) {
+									taskCompletionBuffer = taskCompletionBuffer.slice(-5000);
+								}
 							}
 						}
 
@@ -3935,6 +4061,21 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							loadingIndicator = null;
 						}
 
+						// Final check to ensure we don't exceed total tasks
+						if (completedTaskCount > totalTasks) {
+							completedTaskCount = totalTasks;
+						}
+
+						// Final progress update showing all tasks analyzed
+						// Use the actual count we tracked, but make sure it matches total tasks or is less
+						tasksAnalyzed = Math.min(Math.max(completedTaskCount, tasksAnalyzed), totalTasks);
+						
+						// Debug output showing final counts
+						if (CONFIG.debug && outputFormat === 'text') {
+							console.log(`\n[DEBUG] Final task count: completedTaskCount=${completedTaskCount}, tasksAnalyzed=${tasksAnalyzed}, totalTasks=${totalTasks}`);
+						}
+						
+						// Display success messages after API streaming is complete
 						reportLog(
 							'Completed streaming response from Claude API!',
 							'success'
@@ -3951,6 +4092,9 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						break;
 					} catch (claudeError) {
 						if (streamingInterval) clearInterval(streamingInterval);
+
+						// Reset progress bar flag on error, so we can restart it on retry
+						progressBarStarted = false;
 
 						// Process error to check if it's an overload condition
 						reportLog(
@@ -4037,6 +4181,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							}
 
 							await new Promise((resolve) => setTimeout(resolve, retryDelay));
+							continue; // Try again
 						} else {
 							// Non-overload error - don't retry
 							reportLog(
@@ -4058,7 +4203,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 			}
 
 			// Parse the JSON response
-			reportLog(`Parsing complexity analysis...`, 'info');
+			reportLog(`Parsing complexity analysis...`, 'debug');
 
 			// Only show UI elements for text output (CLI)
 			if (outputFormat === 'text') {
@@ -4076,11 +4221,9 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 				);
 				if (codeBlockMatch) {
 					cleanedResponse = codeBlockMatch[1];
-					reportLog('Extracted JSON from code block', 'info');
-
 					// Only show UI elements for text output (CLI)
 					if (outputFormat === 'text') {
-						console.log(chalk.blue('Extracted JSON from code block'));
+						console.debug(chalk.blue('Extracted JSON from code block'));
 					}
 				} else {
 					// Look for a complete JSON array pattern
@@ -4090,11 +4233,9 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					);
 					if (jsonArrayMatch) {
 						cleanedResponse = jsonArrayMatch[1];
-						reportLog('Extracted JSON array pattern', 'info');
-
 						// Only show UI elements for text output (CLI)
 						if (outputFormat === 'text') {
-							console.log(chalk.blue('Extracted JSON array pattern'));
+							console.log(chalk.blue('  Extracted JSON array pattern'));
 						}
 					} else {
 						// Try to find the start of a JSON array and capture to the end
@@ -4106,8 +4247,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							if (properEndMatch) {
 								cleanedResponse = properEndMatch[1];
 							}
-							reportLog('Extracted JSON from start of array to end', 'info');
-
 							// Only show UI elements for text output (CLI)
 							if (outputFormat === 'text') {
 								console.log(
@@ -4120,11 +4259,11 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 				// Log the cleaned response for debugging - only for text output (CLI)
 				if (outputFormat === 'text') {
-					console.log(chalk.gray('Attempting to parse cleaned JSON...'));
-					console.log(chalk.gray('Cleaned response (first 100 chars):'));
-					console.log(chalk.gray(cleanedResponse.substring(0, 100)));
-					console.log(chalk.gray('Last 100 chars:'));
-					console.log(
+					console.debug(chalk.gray('Attempting to parse cleaned JSON...'));
+					console.debug(chalk.gray('Cleaned response (first 100 chars):'));
+					console.debug(chalk.gray(cleanedResponse.substring(0, 100)));
+					console.debug(chalk.gray('Last 100 chars:'));
+					console.debug(
 						chalk.gray(cleanedResponse.substring(cleanedResponse.length - 100))
 					);
 				}
@@ -4135,25 +4274,18 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 				);
 				if (strictArrayMatch) {
 					cleanedResponse = strictArrayMatch[1];
-					reportLog('Applied strict JSON array extraction', 'info');
-
 					// Only show UI elements for text output (CLI)
 					if (outputFormat === 'text') {
-						console.log(chalk.blue('Applied strict JSON array extraction'));
+						console.debug(chalk.blue("Applied strict JSON array extraction"));
 					}
 				}
 
 				try {
 					complexityAnalysis = JSON.parse(cleanedResponse);
 				} catch (jsonError) {
-					reportLog(
-						'Initial JSON parsing failed, attempting to fix common JSON issues...',
-						'warn'
-					);
-
 					// Only show UI elements for text output (CLI)
 					if (outputFormat === 'text') {
-						console.log(
+						console.warn(
 							chalk.yellow(
 								'Initial JSON parsing failed, attempting to fix common JSON issues...'
 							)
@@ -4191,11 +4323,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 					try {
 						complexityAnalysis = JSON.parse(cleanedResponse);
-						reportLog(
-							'Successfully parsed JSON after fixing common issues',
-							'success'
-						);
-
 						// Only show UI elements for text output (CLI)
 						if (outputFormat === 'text') {
 							console.log(
@@ -4205,14 +4332,9 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							);
 						}
 					} catch (fixedJsonError) {
-						reportLog(
-							'Failed to parse JSON even after fixes, attempting more aggressive cleanup...',
-							'error'
-						);
-
 						// Only show UI elements for text output (CLI)
 						if (outputFormat === 'text') {
-							console.log(
+							console.error(
 								chalk.red(
 									'Failed to parse JSON even after fixes, attempting more aggressive cleanup...'
 								)
@@ -4436,20 +4558,20 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					).length;
 					const totalAnalyzed = complexityAnalysis.length;
 
-					console.log('\nComplexity Analysis Summary:');
-					console.log('----------------------------');
-					console.log(`Tasks in input file: ${tasksData.tasks.length}`);
-					console.log(`Tasks successfully analyzed: ${totalAnalyzed}`);
-					console.log(`High complexity tasks: ${highComplexity}`);
-					console.log(`Medium complexity tasks: ${mediumComplexity}`);
-					console.log(`Low complexity tasks: ${lowComplexity}`);
-					console.log(
+					console.debug('\nComplexity Analysis Summary:');
+					console.debug('----------------------------');
+					console.debug(`Tasks in input file: ${tasksData.tasks.length}`);
+					console.debug(`Tasks successfully analyzed: ${totalAnalyzed}`);
+					console.debug(`High complexity tasks: ${highComplexity}`);
+					console.debug(`Medium complexity tasks: ${mediumComplexity}`);
+					console.debug(`Low complexity tasks: ${lowComplexity}`);
+					console.debug(
 						`Sum verification: ${highComplexity + mediumComplexity + lowComplexity} (should equal ${totalAnalyzed})`
 					);
-					console.log(
+					console.debug(
 						`Research-backed analysis: ${useResearch ? 'Yes' : 'No'}`
 					);
-					console.log(
+					console.debug(
 						`\nSee ${outputPath} for the full report and expansion commands.`
 					);
 

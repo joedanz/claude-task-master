@@ -1679,135 +1679,161 @@ function displayAnalysisProgress(progressData) {
 		completed = false
 	} = progressData;
 
-	// Format the elapsed time
-	const timeDisplay = formatElapsedTime(elapsed);
-
-	// Use static variables to track display state
-	if (displayAnalysisProgress.initialized === undefined) {
-		displayAnalysisProgress.initialized = false;
-		displayAnalysisProgress.lastUpdate = Date.now();
-		displayAnalysisProgress.statusLineStarted = false;
-	}
-
-	// Create progress bar (20 characters wide)
-	const progressBarWidth = 20;
-	const percentText = `${Math.round(percentComplete)}%`;
-	const percentTextLength = percentText.length;
-
-	// Calculate expected total tokens and current progress
-	const totalTokens = contextTokens; // Use the actual token count as the total
-
-	// Calculate current tokens based on percentage complete to show gradual increase from 0 to totalTokens
-	const currentTokens = completed
-		? totalTokens
-		: Math.min(totalTokens, Math.round((percentComplete / 100) * totalTokens));
-
-	// Format token counts with proper padding
-	const totalTokenDigits = totalTokens.toString().length;
-	const currentTokensFormatted = currentTokens
-		.toString()
-		.padStart(totalTokenDigits, '0');
-	const tokenDisplay = `${currentTokensFormatted}/${totalTokens}`;
-
-	// Calculate position for centered percentage
-	const halfBarWidth = Math.floor(progressBarWidth / 2);
-	const percentStartPos = Math.max(
-		0,
-		halfBarWidth - Math.floor(percentTextLength / 2)
-	);
-
-	// Calculate how many filled and empty chars to draw
-	const filledChars = Math.floor((percentComplete / 100) * progressBarWidth);
-
-	// Create the progress bar with centered percentage (without gradient)
-	let progressBar = '';
-	for (let i = 0; i < progressBarWidth; i++) {
-		// If we're at the start position for the percentage text
-		if (i === percentStartPos) {
-			// Apply bold white for percentage text to stand out
-			progressBar += chalk.bold.white(percentText);
-			// Skip ahead by the length of the percentage text
-			i += percentTextLength - 1;
-		} else if (i < filledChars) {
-			// Use a single color instead of gradient
-			progressBar += chalk.cyan('█');
-		} else {
-			// Use a subtle character for empty space
-			progressBar += chalk.gray('░');
-		}
-	}
-
-	// Use spinner from ora - these are the actual frames used in the default spinner
+	// Define spinner frames at the top level so they're accessible to all functions
 	const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-	// Increment the counter faster to speed up the animation
-	if (!displayAnalysisProgress.frameCounter) {
+	// Initialize static variables to track display state if not already done
+	if (displayAnalysisProgress.initialized === undefined) {
+		displayAnalysisProgress.initialized = true;
+		displayAnalysisProgress.lastUpdate = Date.now();
+		displayAnalysisProgress.statusLineStarted = false;
 		displayAnalysisProgress.frameCounter = 0;
-	}
-	if (!displayAnalysisProgress.updateToggle) {
-		displayAnalysisProgress.updateToggle = false;
-	}
-
-	// Toggle between updating and not updating to halve the speed
-	displayAnalysisProgress.updateToggle = !displayAnalysisProgress.updateToggle;
-
-	// Only update every other call to make animation half as fast
-	if (displayAnalysisProgress.updateToggle) {
-		displayAnalysisProgress.frameCounter =
-			(displayAnalysisProgress.frameCounter + 1) % spinnerFrames.length;
-	}
-
-	const spinner = chalk.cyan(
-		spinnerFrames[displayAnalysisProgress.frameCounter]
-	);
-
-	// Format status line based on whether we're complete or not
-	let statusLine;
-
-	if (completed) {
-		// For completed progress, show checkmark and "Complete" text
-		statusLine =
-			`  ${chalk.cyan('⏱')} ${timeDisplay} ${chalk.gray('|')} ` +
-			`Tasks: ${chalk.bold(tasksAnalyzed)}/${totalTasks} ${chalk.gray('|')} ` +
-			`Tokens: ${tokenDisplay} ${chalk.gray('|')} ` +
-			`${progressBar} ${chalk.gray('|')} ` +
-			`${chalk.green('✅')} ${chalk.green('Complete')}`;
+		displayAnalysisProgress.lastProgressData = { ...progressData };
+		displayAnalysisProgress.intervalId = null;
 	} else {
-		// For in-progress, show spinner and "Processing" text
-		statusLine =
-			`  ${chalk.cyan('⏱')} ${timeDisplay} ${chalk.gray('|')} ` +
-			`Tasks: ${chalk.bold(tasksAnalyzed)}/${totalTasks} ${chalk.gray('|')} ` +
-			`Tokens: ${tokenDisplay} ${chalk.gray('|')} ` +
-			`${progressBar} ${chalk.gray('|')} ` +
-			`${chalk.cyan('Processing')} ${spinner}`;
+		// Store the latest progress data
+		displayAnalysisProgress.lastProgressData = { ...progressData };
 	}
 
-	// Clear the line and update the status
-	process.stdout.write('\r\x1B[K');
-	process.stdout.write(statusLine);
+	// Set up animation interval if not already running and not completed
+	if (!displayAnalysisProgress.intervalId && !completed) {
+		displayAnalysisProgress.intervalId = setInterval(() => {
+			// Only update the spinner frame
+			displayAnalysisProgress.frameCounter = 
+				(displayAnalysisProgress.frameCounter + 1) % spinnerFrames.length;
+			
+			// Redraw with latest data but updated spinner
+			renderProgressBar(displayAnalysisProgress.lastProgressData, true);
+		}, 200); // Update spinner every 200ms for slower animation
+	}
 
-	// Additional handling for completion
-	if (completed) {
-		// Move to next line and print completion message in a box
-		process.stdout.write('\n\n');
+	// If completed, clear the interval
+	if (completed && displayAnalysisProgress.intervalId) {
+		clearInterval(displayAnalysisProgress.intervalId);
+		displayAnalysisProgress.intervalId = null;
+	}
 
-		console.log(
-			boxen(
-				chalk.green(`Task complexity analysis completed in ${timeDisplay}`) +
-					'\n' +
-					chalk.green(`✅ Analyzed ${tasksAnalyzed} tasks successfully.`),
-				{
-					padding: { top: 1, bottom: 1, left: 2, right: 2 },
-					margin: { top: 0, bottom: 1 },
-					borderColor: 'green',
-					borderStyle: 'round'
-				}
-			)
+	// Render the progress bar with current data
+	renderProgressBar(progressData, false);
+
+	// Progress bar rendering function
+	function renderProgressBar(data, spinnerOnly = false) {
+		const {
+			model,
+			contextTokens = 0,
+			elapsed = 0,
+			temperature = 0.7,
+			tasksAnalyzed = 0,
+			totalTasks = 0,
+			percentComplete = 0,
+			maxTokens = 0,
+			completed = false
+		} = data;
+
+		// Format the elapsed time
+		const timeDisplay = formatElapsedTime(elapsed);
+
+		// Create progress bar (20 characters wide)
+		const progressBarWidth = 20;
+		const percentText = `${Math.round(percentComplete)}%`;
+		const percentTextLength = percentText.length;
+
+		// Calculate expected total tokens and current progress
+		const totalTokens = contextTokens; // Use the actual token count as the total
+
+		// Calculate current tokens based on percentage complete to show gradual increase from 0 to totalTokens
+		const currentTokens = completed
+			? totalTokens
+			: Math.min(totalTokens, Math.round((percentComplete / 100) * totalTokens));
+
+		// Format token counts with proper padding
+		const totalTokenDigits = totalTokens.toString().length;
+		const currentTokensFormatted = currentTokens
+			.toString()
+			.padStart(totalTokenDigits, '0');
+		const tokenDisplay = `${currentTokensFormatted}/${totalTokens}`;
+
+		// Calculate position for centered percentage
+		const halfBarWidth = Math.floor(progressBarWidth / 2);
+		const percentStartPos = Math.max(
+			0,
+			halfBarWidth - Math.floor(percentTextLength / 2)
 		);
 
-		// Reset initialization state for next run
-		displayAnalysisProgress.initialized = undefined;
-		displayAnalysisProgress.statusLineStarted = false;
+		// Calculate how many filled and empty chars to draw
+		const filledChars = Math.floor((percentComplete / 100) * progressBarWidth);
+
+		// Create the progress bar with centered percentage (without gradient)
+		let progressBar = '';
+		for (let i = 0; i < progressBarWidth; i++) {
+			// If we're at the start position for the percentage text
+			if (i === percentStartPos) {
+				// Apply bold white for percentage text to stand out
+				progressBar += chalk.bold.white(percentText);
+				// Skip ahead by the length of the percentage text
+				i += percentTextLength - 1;
+			} else if (i < filledChars) {
+				// Use a single color instead of gradient
+				progressBar += chalk.cyan('█');
+			} else {
+				// Use a subtle character for empty space
+				progressBar += chalk.gray('░');
+			}
+		}
+
+		const spinner = chalk.cyan(
+			spinnerFrames[displayAnalysisProgress.frameCounter]
+		);
+
+		// Format status line based on whether we're complete or not
+		let statusLine;
+
+		if (completed) {
+			// For completed progress, show checkmark and "Complete" text
+			statusLine =
+				`${chalk.cyan('⏱')} ${timeDisplay} ${chalk.gray('|')} ` +
+				`Tasks: ${tasksAnalyzed}/${totalTasks} ${chalk.gray('|')} ` +
+				`Tokens: ${tokenDisplay} ${chalk.gray('|')} ` +
+				`${progressBar} ${chalk.gray('|')} ` +
+				`${chalk.green('✅')} ${chalk.green('Complete')}`;
+		} else {
+			// For in-progress, show spinner and "Processing" text
+			statusLine =
+				`${chalk.cyan('⏱')} ${timeDisplay} ${chalk.gray('|')} ` +
+				`Tasks: ${tasksAnalyzed}/${totalTasks} ${chalk.gray('|')} ` +
+				`Tokens: ${tokenDisplay} ${chalk.gray('|')} ` +
+				`${progressBar} ${chalk.gray('|')} ` +
+				`${chalk.cyan('Processing')} ${spinner}`;
+		}
+
+		// Clear the line and update the status - ensures we always write in-place
+		process.stdout.write('\r\x1B[K');
+		process.stdout.write(statusLine);
+
+		// Additional handling for completion
+		if (completed && !spinnerOnly) {
+			// Move to next line and print completion message in a box
+			process.stdout.write('\n\n');
+
+			console.log(
+				boxen(
+					chalk.green(`Task complexity analysis completed in ${timeDisplay}`) +
+						'\n' +
+						chalk.green(`✅ Analyzed ${tasksAnalyzed} tasks successfully.`),
+					{
+						padding: { top: 1, bottom: 1, left: 2, right: 2 },
+						margin: { top: 0, bottom: 1 },
+						borderColor: 'green',
+						borderStyle: 'round'
+					}
+				)
+			);
+
+			// Reset initialization state for next run
+			displayAnalysisProgress.initialized = undefined;
+			displayAnalysisProgress.statusLineStarted = false;
+			displayAnalysisProgress.intervalId = null;
+		}
 	}
 }
 
