@@ -1690,6 +1690,50 @@ function displayAnalysisProgress(progressData) {
 		displayAnalysisProgress.frameCounter = 0;
 		displayAnalysisProgress.lastProgressData = { ...progressData };
 		displayAnalysisProgress.intervalId = null;
+		
+		// Set up a robust interrupt handler for multiple signals
+		const cleanupAndExit = () => {
+			// Stop animation immediately
+			if (displayAnalysisProgress.intervalId) {
+				clearInterval(displayAnalysisProgress.intervalId);
+				displayAnalysisProgress.intervalId = null;
+			}
+			
+			// Force terminal cleanup more aggressively
+			try {
+				// Multiple approaches to reset terminal state
+				process.stdout.write('\r');
+				process.stdout.write(' '.repeat(process.stdout.columns || 100));
+				process.stdout.write('\r');
+				
+				// Add spacing and message
+				console.log("\n\n");
+				console.log("Operation cancelled by user");
+				console.log("\n");
+			} catch (e) {
+				// Ignore errors during cleanup
+			}
+			
+			// Reset initialization state
+			displayAnalysisProgress.initialized = undefined;
+			displayAnalysisProgress.statusLineStarted = false;
+			
+			// Remove all signal handlers
+			process.removeListener('SIGINT', cleanupAndExit);
+			process.removeListener('SIGTERM', cleanupAndExit);
+			process.removeListener('SIGQUIT', cleanupAndExit);
+			
+			// Exit immediately
+			process.exit(0);
+		};
+		
+		// Add multiple signal handlers for robustness
+		process.on('SIGINT', cleanupAndExit);
+		process.on('SIGTERM', cleanupAndExit);
+		process.on('SIGQUIT', cleanupAndExit);
+		
+		// Store reference to cleanup function
+		displayAnalysisProgress.cleanup = cleanupAndExit;
 	} else {
 		// Store the latest progress data
 		displayAnalysisProgress.lastProgressData = { ...progressData };
@@ -1704,13 +1748,13 @@ function displayAnalysisProgress(progressData) {
 			
 			// Redraw with latest data but updated spinner
 			renderProgressBar(displayAnalysisProgress.lastProgressData, true);
-		}, 200); // Update spinner every 200ms for slower animation
+		}, 1000); // Update spinner every 1000ms for slower animation (increased from 200ms)
 	}
 
 	// If completed, clear the interval
 	if (completed && displayAnalysisProgress.intervalId) {
-		clearInterval(displayAnalysisProgress.intervalId);
-		displayAnalysisProgress.intervalId = null;
+			clearInterval(displayAnalysisProgress.intervalId);
+			displayAnalysisProgress.intervalId = null;
 	}
 
 	// Render the progress bar with current data
@@ -1807,7 +1851,11 @@ function displayAnalysisProgress(progressData) {
 		}
 
 		// Clear the line and update the status - ensures we always write in-place
-		process.stdout.write('\r\x1B[K');
+		// Use a more compatible approach for clearing the line
+		process.stdout.write('\r');
+		// Use spaces to clear any previous content on the line
+		process.stdout.write(' '.repeat(process.stdout.columns || 100));
+		process.stdout.write('\r');
 		process.stdout.write(statusLine);
 
 		// Additional handling for completion
@@ -1829,10 +1877,25 @@ function displayAnalysisProgress(progressData) {
 				)
 			);
 
+			// Clean up all resources
 			// Reset initialization state for next run
 			displayAnalysisProgress.initialized = undefined;
 			displayAnalysisProgress.statusLineStarted = false;
-			displayAnalysisProgress.intervalId = null;
+			
+			// Stop and clear any interval
+			if (displayAnalysisProgress.intervalId) {
+				clearInterval(displayAnalysisProgress.intervalId);
+				displayAnalysisProgress.intervalId = null;
+			}
+			
+			// Remove the signal handlers if they exist
+			if (displayAnalysisProgress.cleanup) {
+				// Remove the handlers but don't exit
+				process.removeListener('SIGINT', displayAnalysisProgress.cleanup);
+				process.removeListener('SIGTERM', displayAnalysisProgress.cleanup);
+				process.removeListener('SIGQUIT', displayAnalysisProgress.cleanup);
+				displayAnalysisProgress.cleanup = null;
+			}
 		}
 	}
 }
