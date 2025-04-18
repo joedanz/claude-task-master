@@ -1760,6 +1760,14 @@ function displayAnalysisProgress(progressData) {
 	// Render the progress bar with current data
 	renderProgressBar(progressData, false);
 
+	// Helper to determine rounding precision for token counts
+	function getTokenRoundingPrecision(tokenCount) {
+		if (tokenCount >= 100000) return 1000;
+		if (tokenCount >= 10000) return 100;
+		if (tokenCount >= 1000) return 10;
+		return 1;
+	}
+
 	// Progress bar rendering function
 	function renderProgressBar(data, spinnerOnly = false) {
 		const {
@@ -1783,12 +1791,15 @@ function displayAnalysisProgress(progressData) {
 		const percentTextLength = percentText.length;
 
 		// Calculate expected total tokens and current progress
-		const totalTokens = contextTokens; // Use the actual token count as the total
+		const rawTotalTokens = contextTokens;
+		const precision = getTokenRoundingPrecision(rawTotalTokens);
+		const totalTokens = Math.round(rawTotalTokens / precision) * precision;
 
 		// Calculate current tokens based on percentage complete to show gradual increase from 0 to totalTokens
-		const currentTokens = completed
-			? totalTokens
-			: Math.min(totalTokens, Math.round((percentComplete / 100) * totalTokens));
+		const rawCurrentTokens = completed
+			? rawTotalTokens
+			: Math.min(rawTotalTokens, Math.round((percentComplete / 100) * rawTotalTokens));
+		const currentTokens = Math.round(rawCurrentTokens / precision) * precision;
 
 		// Format token counts with proper padding
 		const totalTokenDigits = totalTokens.toString().length;

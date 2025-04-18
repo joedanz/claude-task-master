@@ -3770,7 +3770,8 @@ Your response must be a clean JSON array only, following exactly this format:
 
 DO NOT include any text before or after the JSON array. No explanations, no markdown formatting.`;
 
-					const result = await perplexity.chat.completions.create({
+					// --- STREAMING PERPLEXITY IMPLEMENTATION ---
+					const stream = await perplexity.chat.completions.create({
 						model:
 							process.env.PERPLEXITY_MODEL ||
 							session?.env?.PERPLEXITY_MODEL ||
@@ -3787,77 +3788,85 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							}
 						],
 						temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
-						max_tokens: session?.env?.MAX_TOKENS || CONFIG.maxTokens
+						max_tokens: session?.env?.MAX_TOKENS || CONFIG.maxTokens,
+						stream: true
 					});
 
-					// Extract the response text
-					fullResponse = result.choices[0].message.content;
-					reportLog(
-						'Successfully generated complexity analysis with Perplexity AI',
-						'success'
-					);
+					// Streaming progress bar variables
+					let responseLength = 0;
+					let taskCompletionBuffer = '';
+					let completedTaskCount = 0;
+					let bracketCount = 0;
+					let inTaskObject = false;
+					const taskIdPattern = /"taskId"\s*:\s*(\d+)(?=\s*,|\s*})/g;
+					const seenTaskIds = new Set();
 
-					// Only show UI elements for text output (CLI)
 					if (outputFormat === 'text') {
-						console.log(
-							chalk.green(
-								'Successfully generated complexity analysis with Perplexity AI'
-							)
-						);
-					}
-
-					if (streamingInterval) clearInterval(streamingInterval);
-
-					// Stop loading indicator if it was created
-					if (loadingIndicator) {
-						stopLoadingIndicator(loadingIndicator);
-						loadingIndicator = null;
-					}
-
-					// Progress bar for Perplexity: poll the output file as it is written
-					if (outputFormat === 'text') {
-						const fs = await import('fs');
-						const path = await import('path');
-						const reportPath = path.resolve(process.cwd(), outputPath);
-						let lastTaskCount = 0;
-						let done = false;
-						const pollInterval = 250;
-
-						const poll = async () => {
-							try {
-								if (!fs.existsSync(reportPath)) return;
-								const data = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
-								const tasks = Array.isArray(data) ? data : (data.tasks || []);
-								lastTaskCount = tasks.length;
-								const percent = totalTasks ? (lastTaskCount / totalTasks) * 100 : 0;
-								displayAnalysisProgress({
-									model: modelName,
-									contextTokens,
-									elapsed: (Date.now() - startTime) / 1000,
-									temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
-									tasksAnalyzed: lastTaskCount,
-									totalTasks,
-									percentComplete: percent,
-									maxTokens,
-									completed: lastTaskCount >= totalTasks
-								});
-								if (lastTaskCount >= totalTasks) done = true;
-							} catch (e) {
-								// Ignore parse errors while file is being written
-							}
-						};
-
-						while (!done) {
-							await new Promise(res => setTimeout(res, pollInterval));
-							await poll();
+						if (streamingInterval) clearInterval(streamingInterval);
+						if (loadingIndicator) {
+							stopLoadingIndicator(loadingIndicator);
+							loadingIndicator = null;
 						}
 					}
 
-					// ALWAYS log the first part of the response for debugging
+					// Process the Perplexity stream
+					for await (const chunk of stream) {
+						if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content) {
+							const chunkText = chunk.choices[0].delta.content;
+							fullResponse += chunkText;
+							responseLength += chunkText.length;
+							taskCompletionBuffer += chunkText;
+
+							// Debug logging (only in debug mode)
+							if (CONFIG.debug && outputFormat === 'text') {
+								process.stdout.write('\n[DEBUG] Perplexity chunk: ' + chunkText.replace(/\n/g, '\\n').substring(0, 50));
+							}
+
+							// Bracket-based task detection (like Claude)
+							for (let i = 0; i < chunkText.length; i++) {
+								const char = chunkText[i];
+								if (char === '{') {
+									bracketCount++;
+									if (bracketCount === 1 && !inTaskObject) {
+										inTaskObject = true;
+									}
+								} else if (char === '}') {
+									bracketCount--;
+									if (bracketCount === 0 && inTaskObject) {
+										completedTaskCount++;
+										inTaskObject = false;
+										if (completedTaskCount > totalTasks) completedTaskCount = totalTasks;
+										if (CONFIG.debug && outputFormat === 'text') {
+											process.stdout.write(`\n[DEBUG] Perplexity detected task #${completedTaskCount}/${totalTasks}`);
+										}
+										if (outputFormat === 'text') {
+											displayAnalysisProgress({
+												model: modelName,
+												contextTokens,
+												elapsed: (Date.now() - startTime) / 1000,
+												temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+												tasksAnalyzed: completedTaskCount,
+												totalTasks,
+												percentComplete: totalTasks ? (completedTaskCount / totalTasks) * 100 : 0,
+												maxTokens,
+												completed: completedTaskCount >= totalTasks
+											});
+										}
+									}
+								}
+							}
+						}
+					}
+
 					if (outputFormat === 'text') {
-						console.debug(chalk.gray('Response first 200 chars:'));
+						console.debug(chalk.gray('Perplexity response first 200 chars:'));
 						console.debug(chalk.gray(fullResponse.substring(0, 200)));
 					}
+					reportLog(
+						'Successfully streamed complexity analysis with Perplexity AI',
+						'success'
+					);
+
 				} catch (perplexityError) {
 					reportLog(
 						`Falling back to Claude for complexity analysis: ${perplexityError.message}`,
