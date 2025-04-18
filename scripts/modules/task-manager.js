@@ -3719,11 +3719,26 @@ async function analyzeTaskComplexity(
 
 		// Only start loading indicator for text output (CLI)
 		let loadingIndicator = null;
-		if (outputFormat === 'text') {
+		if (outputFormat === 'text' && !useResearch) {
 			loadingIndicator = startLoadingIndicator(
 				'Calling AI to analyze task complexity...'
 			);
 		}
+		// For Perplexity (research), immediately show the progress bar
+		if (outputFormat === 'text' && useResearch) {
+			displayAnalysisProgress({
+				model: modelName,
+				contextTokens,
+				elapsed: 0,
+				temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+				tasksAnalyzed: 0,
+				totalTasks,
+				percentComplete: 0,
+				maxTokens,
+				completed: false
+			});
+		}
+
 
 		let fullResponse = '';
 		let streamingInterval = null;
@@ -3736,15 +3751,6 @@ async function analyzeTaskComplexity(
 						'Using Perplexity AI for research-backed complexity analysis...',
 						'info'
 					);
-
-					// Only show UI elements for text output (CLI)
-					if (outputFormat === 'text') {
-						console.log(
-							chalk.blue(
-								'Using Perplexity AI for research-backed complexity analysis...'
-							)
-						);
-					}
 
 					// Modify prompt to include more context for Perplexity and explicitly request JSON
 					const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
@@ -3812,6 +3818,42 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					if (loadingIndicator) {
 						stopLoadingIndicator(loadingIndicator);
 						loadingIndicator = null;
+					}
+
+					// Progress bar for Perplexity: update in real-time as tasks are parsed from the streaming response
+					if (outputFormat === 'text') {
+						let buffer = '';
+						let parsedTasks = [];
+						let lastTaskCount = 0;
+						let percent = 0;
+						const startTimeLocal = Date.now();
+						for await (const chunk of result.choices[0].stream()) {
+							if (chunk.delta && chunk.delta.content) {
+								buffer += chunk.delta.content;
+								// Try to parse tasks incrementally (robust to partial JSON)
+								let match = buffer.match(/\[.*?\]/s);
+								if (match) {
+									try {
+										parsedTasks = JSON.parse(match[0]);
+										lastTaskCount = parsedTasks.length;
+										percent = totalTasks ? (lastTaskCount / totalTasks) * 100 : 0;
+										displayAnalysisProgress({
+											model: modelName,
+											contextTokens,
+											elapsed: (Date.now() - startTimeLocal) / 1000,
+											temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+											tasksAnalyzed: lastTaskCount,
+											totalTasks,
+											percentComplete: percent,
+											maxTokens,
+											completed: lastTaskCount >= totalTasks
+										});
+									} catch (e) {
+										// Ignore parse errors on partial JSON
+									}
+								}
+							}
+						}
 					}
 
 					// ALWAYS log the first part of the response for debugging
