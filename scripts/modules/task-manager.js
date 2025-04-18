@@ -3900,7 +3900,29 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							loadingIndicator = null;
 						}
 						
-						reportLog({ percentComplete: 0 }, 'progress');
+						// Directly update progress bar instead of using reportLog for UI concerns
+						const elapsedSeconds = (Date.now() - startTime) / 1000;
+						if (outputFormat === 'text' && !isSilentMode()) {
+							// Clear the current line before displaying progress
+							process.stdout.write('\r\x1B[K');
+							
+							displayAnalysisProgress({
+								model: modelName,
+								contextTokens,
+								elapsed: elapsedSeconds,
+								temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+								tasksAnalyzed,
+								totalTasks,
+								percentComplete: 0,
+								maxTokens,
+								completed: false
+							});
+							
+							// Force flush stdout to ensure terminal updates immediately
+							if (process.stdout.isTTY && typeof process.stdout.flush === 'function') {
+								process.stdout.flush();
+							}
+						}
 						progressBarStarted = true;
 
 						// Call the LLM API with streaming
@@ -4586,7 +4608,26 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					};
 
 					// Mark the analysis as complete with 100% progress
-					reportLog({ percentComplete: 100, completed: true }, 'progress');
+					// Directly update progress bar instead of using reportLog for UI concerns
+					const elapsedSeconds = (Date.now() - startTime) / 1000;
+					if (outputFormat === 'text' && !isSilentMode()) {
+						displayAnalysisProgress({
+							model: modelName,
+							contextTokens,
+							elapsed: elapsedSeconds,
+							temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+							tasksAnalyzed,
+							totalTasks,
+							percentComplete: 100,
+							maxTokens,
+							completed: true
+						});
+						
+						// Force flush stdout to ensure terminal updates immediately
+						if (process.stdout.isTTY && typeof process.stdout.flush === 'function') {
+							process.stdout.flush();
+						}
+					}
 
 					// Display formatted summary if using text output format
 					if (outputFormat === 'text') {
