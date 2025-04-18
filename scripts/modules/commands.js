@@ -45,8 +45,8 @@ import {
 	displayHelp,
 	displayNextTask,
 	displayTaskById,
-	displayComplexityReport,
 	displayComplexityAnalysisStart,
+	displayComplexityReport,
 	getStatusWithColor,
 	confirmTaskOverwrite,
 	startLoadingIndicator,
@@ -155,6 +155,9 @@ function registerCommands(programInstance) {
 				);
 				return;
 			}
+
+			// Check for existing tasks.json before proceeding with specified input file
+			if (!(await confirmOverwriteIfNeeded())) return;
 
 			console.log(chalk.blue(`Parsing PRD file: ${inputFile}`));
 			console.log(chalk.blue(`Generating ${numTasks} tasks...`));
