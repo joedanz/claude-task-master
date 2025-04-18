@@ -738,9 +738,6 @@ function registerCommands(programInstance) {
 			const thresholdScore = parseFloat(options.threshold);
 			const useResearch = options.research || false;
 
-			console.log(chalk.blue(`Analyzing task complexity from: ${tasksPath}`));
-			console.log(chalk.blue(`Output report will be saved to: ${outputPath}`));
-
 			// Call the dedicated UI function to display complexity analysis start information
 			displayComplexityAnalysisStart(
 				tasksPath,
