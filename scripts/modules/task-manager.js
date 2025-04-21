@@ -4122,19 +4122,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						if (CONFIG.debug && outputFormat === 'text') {
 							console.log(`\n[DEBUG] Final task count: completedTaskCount=${completedTaskCount}, tasksAnalyzed=${tasksAnalyzed}, totalTasks=${totalTasks}`);
 						}
-						
-						// Display success messages after API streaming is complete
-						reportLog(
-							'Completed streaming response from Claude API!',
-							'success'
-						);
-
-						// Only show UI elements for text output (CLI)
-						if (outputFormat === 'text') {
-							console.log(
-								chalk.green('Completed streaming response from Claude API!')
-							);
-						}
 
 						// Successfully received response, break the retry loop
 						break;
@@ -4253,11 +4240,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 			// Parse the JSON response
 			reportLog(`Parsing complexity analysis...`, 'debug');
 
-			// Only show UI elements for text output (CLI)
-			if (outputFormat === 'text') {
-				console.log(chalk.blue(`Parsing complexity analysis...`));
-			}
-
 			let complexityAnalysis;
 			try {
 				// Clean up the response to ensure it's valid JSON
@@ -4269,10 +4251,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 				);
 				if (codeBlockMatch) {
 					cleanedResponse = codeBlockMatch[1];
-					// Only show UI elements for text output (CLI)
-					if (outputFormat === 'text') {
-						console.debug(chalk.blue('Extracted JSON from code block'));
-					}
 				} else {
 					// Look for a complete JSON array pattern
 					// This regex looks for an array of objects starting with [ and ending with ]
@@ -4295,25 +4273,8 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							if (properEndMatch) {
 								cleanedResponse = properEndMatch[1];
 							}
-							// Only show UI elements for text output (CLI)
-							if (outputFormat === 'text') {
-								console.log(
-									chalk.blue('Extracted JSON from start of array to end')
-								);
-							}
 						}
 					}
-				}
-
-				// Log the cleaned response for debugging - only for text output (CLI)
-				if (outputFormat === 'text') {
-					console.debug(chalk.gray('Attempting to parse cleaned JSON...'));
-					console.debug(chalk.gray('Cleaned response (first 100 chars):'));
-					console.debug(chalk.gray(cleanedResponse.substring(0, 100)));
-					console.debug(chalk.gray('Last 100 chars:'));
-					console.debug(
-						chalk.gray(cleanedResponse.substring(cleanedResponse.length - 100))
-					);
 				}
 
 				// More aggressive cleaning - strip any non-JSON content at the beginning or end
@@ -4322,10 +4283,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 				);
 				if (strictArrayMatch) {
 					cleanedResponse = strictArrayMatch[1];
-					// Only show UI elements for text output (CLI)
-					if (outputFormat === 'text') {
-						console.debug(chalk.blue("Applied strict JSON array extraction"));
-					}
 				}
 
 				try {
@@ -4578,21 +4535,10 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 				};
 
 				// Write the report to file
-				reportLog(` to ${outputPath}...`, 'info');
 				writeJSON(outputPath, finalReport);
-
-				reportLog(
-					`Task complexity analysis complete. Report written to ${outputPath}`,
-					'success'
-				);
 
 				// Only show UI elements for text output (CLI)
 				if (outputFormat === 'text') {
-					console.log(
-						chalk.green(
-							`Task complexity analysis complete. Report written to ${outputPath}`
-						)
-					);
 
 					// Display a summary of findings
 					const highComplexity = complexityAnalysis.filter(
@@ -4605,23 +4551,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						(t) => t.complexityScore < 5
 					).length;
 					const totalAnalyzed = complexityAnalysis.length;
-
-					console.debug('\nComplexity Analysis Summary:');
-					console.debug('----------------------------');
-					console.debug(`Tasks in input file: ${tasksData.tasks.length}`);
-					console.debug(`Tasks successfully analyzed: ${totalAnalyzed}`);
-					console.debug(`High complexity tasks: ${highComplexity}`);
-					console.debug(`Medium complexity tasks: ${mediumComplexity}`);
-					console.debug(`Low complexity tasks: ${lowComplexity}`);
-					console.debug(
-						`Sum verification: ${highComplexity + mediumComplexity + lowComplexity} (should equal ${totalAnalyzed})`
-					);
-					console.debug(
-						`Research-backed analysis: ${useResearch ? 'Yes' : 'No'}`
-					);
-					console.debug(
-						`\nSee ${outputPath} for the full report and expansion commands.`
-					);
 
 					// Create a simple report summary object for formatting
 					const summary = {
