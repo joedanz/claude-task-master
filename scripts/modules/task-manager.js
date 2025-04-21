@@ -3869,11 +3869,13 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 													session?.env?.TEMPERATURE || CONFIG.temperature,
 												tasksAnalyzed: completedTaskCount,
 												totalTasks,
+												// Cap percentage at 99% during streaming
 												percentComplete: totalTasks
-													? (completedTaskCount / totalTasks) * 100
+													? Math.min(99, (completedTaskCount / totalTasks) * 100)
 													: 0,
 												maxTokens,
-												completed: completedTaskCount >= totalTasks
+												// Don't mark as completed here
+												completed: false 
 											});
 										}
 									}
@@ -3996,21 +3998,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							stream: true
 						});
 
-						// The progress bar is already started, so we don't need this second streaming indicator
-						// Keeping commented for now in case we need to restore it later
-						/* 
-						if (outputFormat === 'text' && !progressBarStarted) {
-							let dotCount = 0;
-							streamingInterval = setInterval(() => {
-								readline.cursorTo(process.stdout, 0);
-								process.stdout.write(
-									`Receiving streaming response from Claude${'.'.repeat(dotCount)}`
-								);
-								dotCount = (dotCount + 1) % 4;
-							}, 500);
-						}
-						*/
-
 						// Variables to track streaming progress for UI
 						let responseLength = 0;
 						const estimatedTotalLength = totalTasks * 200; // Rough estimate
@@ -4081,20 +4068,24 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 											// Update progress with actual task counts
 											tasksAnalyzed = completedTaskCount;
+											// Cap percentage at 99% during streaming
 											const taskPercentComplete = Math.min(
-												95,
+												99,
 												(completedTaskCount / totalTasks) * 100
 											);
 
 											// Update the progress display with real task count data
-											reportLog(
-												{
-													percentComplete: taskPercentComplete,
-													totalTasks: totalTasks,
-													tasksAnalyzed: completedTaskCount
-												},
-												'progress'
-											);
+											displayAnalysisProgress({
+												model: modelName,
+												contextTokens,
+												elapsed: elapsedSeconds,
+												temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+												tasksAnalyzed: completedTaskCount,
+												totalTasks,
+												percentComplete: taskPercentComplete,
+												maxTokens,
+												completed: false
+											});
 										}
 									}
 								}
@@ -4134,19 +4125,23 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 									if (newCount > completedTaskCount) {
 										completedTaskCount = newCount;
 										tasksAnalyzed = completedTaskCount;
+										// Cap percentage at 99% during streaming
 										const taskPercentComplete = Math.min(
-											95,
+											99,
 											(completedTaskCount / totalTasks) * 100
 										);
 
-										reportLog(
-											{
-												percentComplete: taskPercentComplete,
-												totalTasks: totalTasks,
-												tasksAnalyzed: completedTaskCount
-											},
-											'progress'
-										);
+										displayAnalysisProgress({
+											model: modelName,
+											contextTokens,
+											elapsed: elapsedSeconds,
+											temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+											tasksAnalyzed: completedTaskCount,
+											totalTasks,
+											percentComplete: taskPercentComplete,
+											maxTokens,
+											completed: false
+										});
 									}
 								}
 
@@ -4627,7 +4622,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							contextTokens,
 							elapsed: elapsedSeconds,
 							temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
-							tasksAnalyzed,
+							tasksAnalyzed: totalTasks,
 							totalTasks,
 							percentComplete: 100,
 							maxTokens,
