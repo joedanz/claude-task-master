@@ -3755,19 +3755,6 @@ async function analyzeTaskComplexity(
 			// If research flag is set, use Perplexity first
 			if (useResearch) {
 				try {
-					reportLog(
-						'Using Perplexity AI for research-backed complexity analysis...',
-						'info'
-					);
-
-					// Only show UI elements for text output (CLI)
-					if (outputFormat === 'text') {
-						console.log(
-							chalk.blue(
-								'Using Perplexity AI for research-backed complexity analysis...'
-							)
-						);
-					}
 
 					// Modify prompt to include more context for Perplexity and explicitly request JSON
 					const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
@@ -3894,15 +3881,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							}
 						}
 					}
-
-					if (outputFormat === 'text') {
-						console.debug(chalk.gray('Perplexity response first 200 chars:'));
-						console.debug(chalk.gray(fullResponse.substring(0, 200)));
-					}
-					reportLog(
-						'Successfully streamed complexity analysis with Perplexity AI',
-						'success'
-					);
 				} catch (perplexityError) {
 					reportLog(
 						`Falling back to Claude for complexity analysis: ${perplexityError.message}`,
@@ -4342,10 +4320,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					);
 					if (jsonArrayMatch) {
 						cleanedResponse = jsonArrayMatch[1];
-						// Only show UI elements for text output (CLI)
-						if (outputFormat === 'text') {
-							console.log(chalk.blue('  Extracted JSON array pattern'));
-						}
 					} else {
 						// Try to find the start of a JSON array and capture to the end
 						const jsonStartMatch = fullResponse.match(/(\[\s*\{[\s\S]*)/);

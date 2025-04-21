@@ -759,14 +759,6 @@ function registerCommands(programInstance) {
 				CONFIG.temperature
 			);
 
-			if (useResearch) {
-				console.log(
-					chalk.blue(
-						'Using Perplexity AI for research-backed complexity analysis'
-					)
-				);
-			}
-
 			await analyzeTaskComplexity(options);
 		});
 
