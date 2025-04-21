@@ -3641,7 +3641,7 @@ async function analyzeTaskComplexity(
 			if (message.percentComplete === 0) {
 				process.stdout.write('\r\x1B[K'); // Clear the current line
 			}
-			
+
 			displayAnalysisProgress({
 				model: modelName,
 				contextTokens,
@@ -3653,7 +3653,7 @@ async function analyzeTaskComplexity(
 				maxTokens,
 				completed: message.completed || false
 			});
-			
+
 			// Force flush stdout to ensure terminal updates immediately
 			if (process.stdout.isTTY && typeof process.stdout.flush === 'function') {
 				process.stdout.flush();
@@ -3736,7 +3736,7 @@ async function analyzeTaskComplexity(
 
 		// Prepare the prompt for the LLM
 		const prompt = generateComplexityAnalysisPrompt(tasksData);
-		
+
 		// Update contextTokens for progress display
 		contextTokens = prompt.length / 3; // Rough estimate of token count
 
@@ -3834,7 +3834,12 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 					// Process the Perplexity stream
 					for await (const chunk of stream) {
-						if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content) {
+						if (
+							chunk.choices &&
+							chunk.choices[0] &&
+							chunk.choices[0].delta &&
+							chunk.choices[0].delta.content
+						) {
 							const chunkText = chunk.choices[0].delta.content;
 							fullResponse += chunkText;
 							responseLength += chunkText.length;
@@ -3842,7 +3847,10 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 							// Debug logging (only in debug mode)
 							if (CONFIG.debug && outputFormat === 'text') {
-								process.stdout.write('\n[DEBUG] Perplexity chunk: ' + chunkText.replace(/\n/g, '\\n').substring(0, 50));
+								process.stdout.write(
+									'\n[DEBUG] Perplexity chunk: ' +
+										chunkText.replace(/\n/g, '\\n').substring(0, 50)
+								);
 							}
 
 							// Bracket-based task detection (like Claude)
@@ -3858,19 +3866,25 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 									if (bracketCount === 0 && inTaskObject) {
 										completedTaskCount++;
 										inTaskObject = false;
-										if (completedTaskCount > totalTasks) completedTaskCount = totalTasks;
+										if (completedTaskCount > totalTasks)
+											completedTaskCount = totalTasks;
 										if (CONFIG.debug && outputFormat === 'text') {
-											process.stdout.write(`\n[DEBUG] Perplexity detected task #${completedTaskCount}/${totalTasks}`);
+											process.stdout.write(
+												`\n[DEBUG] Perplexity detected task #${completedTaskCount}/${totalTasks}`
+											);
 										}
 										if (outputFormat === 'text') {
 											displayAnalysisProgress({
 												model: modelName,
 												contextTokens,
 												elapsed: (Date.now() - startTime) / 1000,
-												temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+												temperature:
+													session?.env?.TEMPERATURE || CONFIG.temperature,
 												tasksAnalyzed: completedTaskCount,
 												totalTasks,
-												percentComplete: totalTasks ? (completedTaskCount / totalTasks) * 100 : 0,
+												percentComplete: totalTasks
+													? (completedTaskCount / totalTasks) * 100
+													: 0,
 												maxTokens,
 												completed: completedTaskCount >= totalTasks
 											});
@@ -3889,7 +3903,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						'Successfully streamed complexity analysis with Perplexity AI',
 						'success'
 					);
-
 				} catch (perplexityError) {
 					reportLog(
 						`Falling back to Claude for complexity analysis: ${perplexityError.message}`,
@@ -3929,7 +3942,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 					const isLastAttempt = retryAttempt >= maxRetryAttempts;
 
 					try {
-
 						// Update loading indicator for CLI
 						if (outputFormat === 'text' && loadingIndicator) {
 							stopLoadingIndicator(loadingIndicator);
@@ -3942,12 +3954,12 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						if (outputFormat === 'text' && !progressBarStarted) {
 							let dotCount = 0;
 							streamingInterval = setInterval(() => {
-									readline.cursorTo(process.stdout, 0);
-									process.stdout.write(
-										`Receiving streaming response from Claude${'.'.repeat(dotCount)}`
-									);
-									dotCount = (dotCount + 1) % 4;
-								}, 500);
+								readline.cursorTo(process.stdout, 0);
+								process.stdout.write(
+									`Receiving streaming response from Claude${'.'.repeat(dotCount)}`
+								);
+								dotCount = (dotCount + 1) % 4;
+							}, 500);
 						}
 
 						// Always start the progress bar at 0% before calling Claude API
@@ -3959,19 +3971,19 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							readline.cursorTo(process.stdout, 0);
 							process.stdout.clearLine(0);
 						}
-						
+
 						// Make sure any loading indicator is completely stopped before showing progress
 						if (loadingIndicator) {
 							stopLoadingIndicator(loadingIndicator);
 							loadingIndicator = null;
 						}
-						
+
 						// Directly update progress bar instead of using reportLog for UI concerns
 						const elapsedSeconds = (Date.now() - startTime) / 1000;
 						if (outputFormat === 'text' && !isSilentMode()) {
 							// Clear the current line before displaying progress
 							process.stdout.write('\r\x1B[K');
-							
+
 							displayAnalysisProgress({
 								model: modelName,
 								contextTokens,
@@ -3983,9 +3995,12 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 								maxTokens,
 								completed: false
 							});
-							
+
 							// Force flush stdout to ensure terminal updates immediately
-							if (process.stdout.isTTY && typeof process.stdout.flush === 'function') {
+							if (
+								process.stdout.isTTY &&
+								typeof process.stdout.flush === 'function'
+							) {
 								process.stdout.flush();
 							}
 						}
@@ -4021,7 +4036,7 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						// Variables to track streaming progress for UI
 						let responseLength = 0;
 						const estimatedTotalLength = totalTasks * 200; // Rough estimate
-						
+
 						// Task tracking variables for real-time progress detection
 						let taskCompletionBuffer = '';
 						let completedTaskCount = 0;
@@ -4030,9 +4045,9 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 						// Make the taskId pattern more specific to avoid false positives
 						// This captures only valid JSON property format for taskId with exact format and comma or closing brace
 						const taskIdPattern = /"taskId"\s*:\s*(\d+)(?=\s*,|\s*})/g;
-                        
-                        // Create a set to track seen task IDs to avoid duplicates
-                        const seenTaskIds = new Set();
+
+						// Create a set to track seen task IDs to avoid duplicates
+						const seenTaskIds = new Set();
 
 						// Process the stream
 						for await (const chunk of stream) {
@@ -4043,17 +4058,20 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 								// Add to task completion buffer for parsing
 								taskCompletionBuffer += chunkText;
-								
+
 								// Debug logging (only in debug mode)
 								if (CONFIG.debug && outputFormat === 'text') {
-									process.stdout.write('\n[DEBUG] Chunk received: ' + chunkText.replace(/\n/g, '\\n').substring(0, 50));
+									process.stdout.write(
+										'\n[DEBUG] Chunk received: ' +
+											chunkText.replace(/\n/g, '\\n').substring(0, 50)
+									);
 								}
 
 								// Task detection algorithm: count brackets and detect task objects
 								// Track opening and closing brackets to identify complete JSON objects
 								for (let i = 0; i < chunkText.length; i++) {
 									const char = chunkText[i];
-									
+
 									if (char === '{') {
 										bracketCount++;
 										if (bracketCount === 1 && !inTaskObject) {
@@ -4067,73 +4085,93 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 											// We've detected a full task object
 											completedTaskCount++;
 											inTaskObject = false;
-											
+
 											// Ensure we don't count more tasks than total
 											if (completedTaskCount > totalTasks) {
 												completedTaskCount = totalTasks;
 											}
-											
+
 											// Log task completion for debugging
 											if (CONFIG.debug && outputFormat === 'text') {
-												process.stdout.write(`\n[DEBUG] Detected task completion #${completedTaskCount}/${totalTasks}`);
+												process.stdout.write(
+													`\n[DEBUG] Detected task completion #${completedTaskCount}/${totalTasks}`
+												);
 											}
-											
+
 											// Reset buffer after parsing a complete task to prevent memory buildup
 											taskCompletionBuffer = '';
-											
+
 											// Update progress with actual task counts
 											tasksAnalyzed = completedTaskCount;
-											const taskPercentComplete = Math.min(95, (completedTaskCount / totalTasks) * 100);
-											
+											const taskPercentComplete = Math.min(
+												95,
+												(completedTaskCount / totalTasks) * 100
+											);
+
 											// Update the progress display with real task count data
-											reportLog({
-												percentComplete: taskPercentComplete,
-												totalTasks: totalTasks,
-												tasksAnalyzed: completedTaskCount
-											}, 'progress');
+											reportLog(
+												{
+													percentComplete: taskPercentComplete,
+													totalTasks: totalTasks,
+													tasksAnalyzed: completedTaskCount
+												},
+												'progress'
+											);
+										}
+									}
 								}
-							}
-								}
-								
+
 								// Also look for taskId patterns as backup detection method
 								// This helps when bracket counting might be unreliable
-								const taskIdMatches = [...taskCompletionBuffer.matchAll(taskIdPattern)];
-								
+								const taskIdMatches = [
+									...taskCompletionBuffer.matchAll(taskIdPattern)
+								];
+
 								// Count unique task IDs
-								taskIdMatches.forEach(match => {
+								taskIdMatches.forEach((match) => {
 									const taskId = match[1];
 									if (!seenTaskIds.has(taskId)) {
 										seenTaskIds.add(taskId);
-										
+
 										if (CONFIG.debug && outputFormat === 'text') {
-											process.stdout.write(`\n[DEBUG] Found new taskId: ${taskId}`);
+											process.stdout.write(
+												`\n[DEBUG] Found new taskId: ${taskId}`
+											);
 										}
 									}
 								});
-								
+
 								// If we found more unique tasks than our bracket counting detected
 								if (seenTaskIds.size > completedTaskCount) {
 									// Found more taskIds than our bracket counting detected
 									const newCount = Math.min(seenTaskIds.size, totalTasks); // Never exceed total
-									
+
 									if (CONFIG.debug && outputFormat === 'text') {
-										process.stdout.write(`\n[DEBUG] taskId detection found ${seenTaskIds.size} tasks, bracket counting found ${completedTaskCount}`);
-							}
-									
+										process.stdout.write(
+											`\n[DEBUG] taskId detection found ${seenTaskIds.size} tasks, bracket counting found ${completedTaskCount}`
+										);
+									}
+
 									// Update to the higher count, but never exceed totalTasks
 									if (newCount > completedTaskCount) {
 										completedTaskCount = newCount;
 										tasksAnalyzed = completedTaskCount;
-										const taskPercentComplete = Math.min(95, (completedTaskCount / totalTasks) * 100);
-										
-										reportLog({
-											percentComplete: taskPercentComplete,
-											totalTasks: totalTasks,
-											tasksAnalyzed: completedTaskCount
-										}, 'progress');
+										const taskPercentComplete = Math.min(
+											95,
+											(completedTaskCount / totalTasks) * 100
+										);
+
+										reportLog(
+											{
+												percentComplete: taskPercentComplete,
+												totalTasks: totalTasks,
+												tasksAnalyzed: completedTaskCount
+											},
+											'progress'
+										);
 									}
 								}
-								
+
 								// Trim buffer if it gets too large to prevent memory issues
 								if (taskCompletionBuffer.length > 10000) {
 									taskCompletionBuffer = taskCompletionBuffer.slice(-5000);
@@ -4156,11 +4194,16 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 						// Final progress update showing all tasks analyzed
 						// Use the actual count we tracked, but make sure it matches total tasks or is less
-						tasksAnalyzed = Math.min(Math.max(completedTaskCount, tasksAnalyzed), totalTasks);
-						
+						tasksAnalyzed = Math.min(
+							Math.max(completedTaskCount, tasksAnalyzed),
+							totalTasks
+						);
+
 						// Debug output showing final counts
 						if (CONFIG.debug && outputFormat === 'text') {
-							console.log(`\n[DEBUG] Final task count: completedTaskCount=${completedTaskCount}, tasksAnalyzed=${tasksAnalyzed}, totalTasks=${totalTasks}`);
+							console.log(
+								`\n[DEBUG] Final task count: completedTaskCount=${completedTaskCount}, tasksAnalyzed=${tasksAnalyzed}, totalTasks=${totalTasks}`
+							);
 						}
 
 						// Successfully received response, break the retry loop
@@ -4579,7 +4622,6 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 
 				// Only show UI elements for text output (CLI)
 				if (outputFormat === 'text') {
-
 					// Display a summary of findings
 					const highComplexity = complexityAnalysis.filter(
 						(t) => t.complexityScore >= 8
@@ -4617,9 +4659,12 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 							maxTokens,
 							completed: true
 						});
-						
+
 						// Force flush stdout to ensure terminal updates immediately
-						if (process.stdout.isTTY && typeof process.stdout.flush === 'function') {
+						if (
+							process.stdout.isTTY &&
+							typeof process.stdout.flush === 'function'
+						) {
 							process.stdout.flush();
 						}
 					}

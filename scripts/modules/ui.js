@@ -1690,7 +1690,7 @@ function displayAnalysisProgress(progressData) {
 		displayAnalysisProgress.frameCounter = 0;
 		displayAnalysisProgress.lastProgressData = { ...progressData };
 		displayAnalysisProgress.intervalId = null;
-		
+
 		// Set up a robust interrupt handler for multiple signals
 		const cleanupAndExit = () => {
 			// Stop animation immediately
@@ -1698,40 +1698,40 @@ function displayAnalysisProgress(progressData) {
 				clearInterval(displayAnalysisProgress.intervalId);
 				displayAnalysisProgress.intervalId = null;
 			}
-			
+
 			// Force terminal cleanup more aggressively
 			try {
 				// Multiple approaches to reset terminal state
 				process.stdout.write('\r');
 				process.stdout.write(' '.repeat(process.stdout.columns || 100));
 				process.stdout.write('\r');
-				
+
 				// Add spacing and message
-				console.log("\n\n");
-				console.log("Operation cancelled by user");
-				console.log("\n");
+				console.log('\n\n');
+				console.log('Operation cancelled by user');
+				console.log('\n');
 			} catch (e) {
 				// Ignore errors during cleanup
 			}
-			
+
 			// Reset initialization state
 			displayAnalysisProgress.initialized = undefined;
 			displayAnalysisProgress.statusLineStarted = false;
-			
+
 			// Remove all signal handlers
 			process.removeListener('SIGINT', cleanupAndExit);
 			process.removeListener('SIGTERM', cleanupAndExit);
 			process.removeListener('SIGQUIT', cleanupAndExit);
-			
+
 			// Exit immediately
 			process.exit(0);
 		};
-		
+
 		// Add multiple signal handlers for robustness
 		process.on('SIGINT', cleanupAndExit);
 		process.on('SIGTERM', cleanupAndExit);
 		process.on('SIGQUIT', cleanupAndExit);
-		
+
 		// Store reference to cleanup function
 		displayAnalysisProgress.cleanup = cleanupAndExit;
 	} else {
@@ -1743,9 +1743,9 @@ function displayAnalysisProgress(progressData) {
 	if (!displayAnalysisProgress.intervalId && !completed) {
 		displayAnalysisProgress.intervalId = setInterval(() => {
 			// Only update the spinner frame
-			displayAnalysisProgress.frameCounter = 
+			displayAnalysisProgress.frameCounter =
 				(displayAnalysisProgress.frameCounter + 1) % spinnerFrames.length;
-			
+
 			// Redraw with latest data but updated spinner
 			renderProgressBar(displayAnalysisProgress.lastProgressData, true);
 		}, 1000); // Update spinner every 1000ms for slower animation (increased from 200ms)
@@ -1753,8 +1753,8 @@ function displayAnalysisProgress(progressData) {
 
 	// If completed, clear the interval
 	if (completed && displayAnalysisProgress.intervalId) {
-			clearInterval(displayAnalysisProgress.intervalId);
-			displayAnalysisProgress.intervalId = null;
+		clearInterval(displayAnalysisProgress.intervalId);
+		displayAnalysisProgress.intervalId = null;
 	}
 
 	// Render the progress bar with current data
@@ -1798,7 +1798,10 @@ function displayAnalysisProgress(progressData) {
 		// Calculate current tokens based on percentage complete to show gradual increase from 0 to totalTokens
 		const rawCurrentTokens = completed
 			? rawTotalTokens
-			: Math.min(rawTotalTokens, Math.round((percentComplete / 100) * rawTotalTokens));
+			: Math.min(
+					rawTotalTokens,
+					Math.round((percentComplete / 100) * rawTotalTokens)
+				);
 		const currentTokens = Math.round(rawCurrentTokens / precision) * precision;
 
 		// Format token counts with proper padding
@@ -1892,13 +1895,13 @@ function displayAnalysisProgress(progressData) {
 			// Reset initialization state for next run
 			displayAnalysisProgress.initialized = undefined;
 			displayAnalysisProgress.statusLineStarted = false;
-			
+
 			// Stop and clear any interval
 			if (displayAnalysisProgress.intervalId) {
 				clearInterval(displayAnalysisProgress.intervalId);
 				displayAnalysisProgress.intervalId = null;
 			}
-			
+
 			// Remove the signal handlers if they exist
 			if (displayAnalysisProgress.cleanup) {
 				// Remove the handlers but don't exit
