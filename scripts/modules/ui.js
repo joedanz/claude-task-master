@@ -26,6 +26,44 @@ const coolGradient = gradient(['#00b4d8', '#0077b6', '#03045e']);
 const warmGradient = gradient(['#fb8b24', '#e36414', '#9a031e']);
 
 /**
+ * Centralized interrupt handler for cleaning up and exiting gracefully
+ * @param {Object} options - Options for cleanup
+ * @param {Function} options.clearInterval - Function to clear any active intervals
+ * @param {string} options.source - Source of the interrupt (for debugging)
+ */
+function handleSigint(options = {}) {
+	const { clearIntervalFn, source = 'unknown' } = options;
+
+	// Stop animation immediately if a clear function is provided
+	if (typeof clearIntervalFn === 'function') {
+		clearIntervalFn();
+	}
+
+	// Force terminal cleanup more aggressively
+	try {
+		// Multiple approaches to reset terminal state
+		process.stdout.write('\r');
+		process.stdout.write(' '.repeat(process.stdout.columns || 100));
+		process.stdout.write('\r');
+
+		// Add spacing and message
+		console.log('\n\n');
+		console.log('Operation cancelled by user');
+		console.log('\n');
+	} catch (e) {
+		// Ignore errors during cleanup
+	}
+
+	// Remove all signal handlers
+	process.removeListener('SIGINT', handleSigint);
+	process.removeListener('SIGTERM', handleSigint);
+	process.removeListener('SIGQUIT', handleSigint);
+
+	// Exit immediately
+	process.exit(0);
+}
+
+/**
  * Display a fancy banner for the CLI
  */
 function displayBanner() {
@@ -81,6 +119,25 @@ function startLoadingIndicator(message) {
 		color: 'cyan'
 	}).start();
 
+	// Set up signal handlers for the spinner
+	const cleanupFn = () =>
+		handleSigint({
+			clearIntervalFn: () => {
+				if (spinner && spinner.stop) {
+					spinner.stop();
+				}
+			},
+			source: 'spinner'
+		});
+
+	// Attach signal handlers
+	process.on('SIGINT', cleanupFn);
+	process.on('SIGTERM', cleanupFn);
+	process.on('SIGQUIT', cleanupFn);
+
+	// Store reference to cleanup function
+	spinner.cleanup = cleanupFn;
+
 	return spinner;
 }
 
@@ -91,6 +148,14 @@ function startLoadingIndicator(message) {
 function stopLoadingIndicator(spinner) {
 	if (spinner && spinner.stop) {
 		spinner.stop();
+	}
+
+	// Remove signal handlers if they exist
+	if (spinner && spinner.cleanup) {
+		process.removeListener('SIGINT', spinner.cleanup);
+		process.removeListener('SIGTERM', spinner.cleanup);
+		process.removeListener('SIGQUIT', spinner.cleanup);
+		spinner.cleanup = null;
 	}
 }
 
@@ -1691,49 +1756,28 @@ function displayAnalysisProgress(progressData) {
 		displayAnalysisProgress.lastProgressData = { ...progressData };
 		displayAnalysisProgress.intervalId = null;
 
-		// Set up a robust interrupt handler for multiple signals
-		const cleanupAndExit = () => {
-			// Stop animation immediately
-			if (displayAnalysisProgress.intervalId) {
-				clearInterval(displayAnalysisProgress.intervalId);
-				displayAnalysisProgress.intervalId = null;
-			}
-
-			// Force terminal cleanup more aggressively
-			try {
-				// Multiple approaches to reset terminal state
-				process.stdout.write('\r');
-				process.stdout.write(' '.repeat(process.stdout.columns || 100));
-				process.stdout.write('\r');
-
-				// Add spacing and message
-				console.log('\n\n');
-				console.log('Operation cancelled by user');
-				console.log('\n');
-			} catch (e) {
-				// Ignore errors during cleanup
-			}
-
-			// Reset initialization state
-			displayAnalysisProgress.initialized = undefined;
-			displayAnalysisProgress.statusLineStarted = false;
-
-			// Remove all signal handlers
-			process.removeListener('SIGINT', cleanupAndExit);
-			process.removeListener('SIGTERM', cleanupAndExit);
-			process.removeListener('SIGQUIT', cleanupAndExit);
-
-			// Exit immediately
-			process.exit(0);
-		};
+		// Create a cleanup function specific to this progress display
+		const progressCleanupFn = () =>
+			handleSigint({
+				clearIntervalFn: () => {
+					if (displayAnalysisProgress.intervalId) {
+						clearInterval(displayAnalysisProgress.intervalId);
+						displayAnalysisProgress.intervalId = null;
+					}
+					// Reset initialization state
+					displayAnalysisProgress.initialized = undefined;
+					displayAnalysisProgress.statusLineStarted = false;
+				},
+				source: 'progress-bar'
+			});
 
 		// Add multiple signal handlers for robustness
-		process.on('SIGINT', cleanupAndExit);
-		process.on('SIGTERM', cleanupAndExit);
-		process.on('SIGQUIT', cleanupAndExit);
+		process.on('SIGINT', progressCleanupFn);
+		process.on('SIGTERM', progressCleanupFn);
+		process.on('SIGQUIT', progressCleanupFn);
 
 		// Store reference to cleanup function
-		displayAnalysisProgress.cleanup = cleanupAndExit;
+		displayAnalysisProgress.cleanup = progressCleanupFn;
 	} else {
 		// Store the latest progress data
 		displayAnalysisProgress.lastProgressData = { ...progressData };
@@ -2164,5 +2208,6 @@ export {
 	displayComplexityReport,
 	displayAnalysisProgress,
 	formatComplexitySummary,
-	confirmTaskOverwrite
+	confirmTaskOverwrite,
+	handleSigint // Export the SIGINT handler for potential external use
 };
