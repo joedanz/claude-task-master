@@ -3755,7 +3755,6 @@ async function analyzeTaskComplexity(
 			// If research flag is set, use Perplexity first
 			if (useResearch) {
 				try {
-
 					// Modify prompt to include more context for Perplexity and explicitly request JSON
 					const researchPrompt = `You are conducting a detailed analysis of software development tasks to determine their complexity and how they should be broken down into subtasks.
 
@@ -3871,11 +3870,14 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 												totalTasks,
 												// Cap percentage at 99% during streaming
 												percentComplete: totalTasks
-													? Math.min(99, (completedTaskCount / totalTasks) * 100)
+													? Math.min(
+															99,
+															(completedTaskCount / totalTasks) * 100
+														)
 													: 0,
 												maxTokens,
 												// Don't mark as completed here
-												completed: false 
+												completed: false
 											});
 										}
 									}
@@ -4079,7 +4081,8 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 												model: modelName,
 												contextTokens,
 												elapsed: elapsedSeconds,
-												temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+												temperature:
+													session?.env?.TEMPERATURE || CONFIG.temperature,
 												tasksAnalyzed: completedTaskCount,
 												totalTasks,
 												percentComplete: taskPercentComplete,
@@ -4135,7 +4138,8 @@ DO NOT include any text before or after the JSON array. No explanations, no mark
 											model: modelName,
 											contextTokens,
 											elapsed: elapsedSeconds,
-											temperature: session?.env?.TEMPERATURE || CONFIG.temperature,
+											temperature:
+												session?.env?.TEMPERATURE || CONFIG.temperature,
 											tasksAnalyzed: completedTaskCount,
 											totalTasks,
 											percentComplete: taskPercentComplete,
