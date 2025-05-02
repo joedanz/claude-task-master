@@ -31,12 +31,12 @@ function resolveEnvVariable(varName, session) {
  * Finds the project root directory by searching upwards from a given starting point
  * for a marker file or directory (e.g., 'package.json', '.git').
  * @param {string} [startPath=process.cwd()] - The directory to start searching from.
- * @param {string[]} [markers=['package.json', '.git', '.taskmasterconfig']] - Marker files/dirs to look for.
+ * @param {string[]} [markers=['package.json', '.git', '.taskmaster']] - Marker files/dirs to look for.
  * @returns {string|null} The path to the project root directory, or null if not found.
  */
 function findProjectRoot(
 	startPath = process.cwd(),
-	markers = ['package.json', '.git', '.taskmasterconfig']
+	markers = ['package.json', '.git', '.taskmaster']
 ) {
 	let currentPath = path.resolve(startPath);
 	while (true) {

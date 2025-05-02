@@ -27,12 +27,20 @@ try {
 	process.exit(1); // Exit if models can't be loaded
 }
 
-const CONFIG_FILE_NAME = '.taskmasterconfig';
+const CONFIG_DIR = '.taskmaster';
+const CONFIG_FILE = 'config.yaml';
+const yaml = require('js-yaml');
+
+function getConfigPath(projectRoot) {
+	if (!projectRoot)
+		throw new Error('Project root is required to get config path.');
+	return path.join(projectRoot, CONFIG_DIR, CONFIG_FILE);
+}
 
 // Define valid providers dynamically from the loaded MODEL_MAP
 const VALID_PROVIDERS = Object.keys(MODEL_MAP || {});
 
-// Default configuration values (used if .taskmasterconfig is missing or incomplete)
+// Default configuration values (used if .taskmaster/config.yaml is missing or incomplete)
 const DEFAULTS = {
 	models: {
 		main: {
@@ -97,7 +105,7 @@ function _loadAndValidateConfig(explicitRoot = null) {
 	// ---> End find project root logic <---
 
 	// --- Proceed with loading from the determined rootToUse ---
-	const configPath = path.join(rootToUse, CONFIG_FILE_NAME);
+	const configPath = getConfigPath(rootToUse);
 	let config = { ...defaults }; // Start with a deep copy of defaults
 	let configExists = false;
 
@@ -105,7 +113,7 @@ function _loadAndValidateConfig(explicitRoot = null) {
 		configExists = true;
 		try {
 			const rawData = fs.readFileSync(configPath, 'utf-8');
-			const parsedConfig = JSON.parse(rawData);
+			const parsedConfig = yaml.load(rawData);
 
 			// Deep merge parsed config onto defaults
 			config = {
@@ -171,13 +179,13 @@ function _loadAndValidateConfig(explicitRoot = null) {
 			// Only warn if an explicit root was *expected*.
 			console.warn(
 				chalk.yellow(
-					`Warning: ${CONFIG_FILE_NAME} not found at provided project root (${explicitRoot}). Using default configuration. Run 'task-master models --setup' to configure.`
+					`Warning: ${CONFIG_FILE} not found at provided project root (${explicitRoot}). Using default configuration. Run 'task-master models --setup' to configure.`
 				)
 			);
 		} else {
 			console.warn(
 				chalk.yellow(
-					`Warning: ${CONFIG_FILE_NAME} not found at derived root (${rootToUse}). Using defaults.`
+					`Warning: ${CONFIG_FILE} not found at derived root (${rootToUse}). Using defaults.`
 				)
 			);
 		}
@@ -621,13 +629,11 @@ function writeConfig(config, explicitRoot = null) {
 	}
 	// ---> End determine root path logic <---
 
-	const configPath =
-		path.basename(rootPath) === CONFIG_FILE_NAME
-			? rootPath
-			: path.join(rootPath, CONFIG_FILE_NAME);
+	const configPath = getConfigPath(rootPath);
 
 	try {
-		fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		fs.writeFileSync(configPath, yaml.dump(config));
 		loadedConfig = config; // Update the cache after successful write
 		return true;
 	} catch (error) {
@@ -641,7 +647,7 @@ function writeConfig(config, explicitRoot = null) {
 }
 
 /**
- * Checks if the .taskmasterconfig file exists at the project root
+ * Checks if the .taskmaster/config.yaml file exists at the project root
  * @param {string|null} explicitRoot - Optional explicit path to the project root
  * @returns {boolean} True if the file exists, false otherwise
  */
@@ -658,7 +664,7 @@ function isConfigFilePresent(explicitRoot = null) {
 	}
 	// ---> End determine root path logic <---
 
-	const configPath = path.join(rootPath, CONFIG_FILE_NAME);
+	const configPath = getConfigPath(rootPath);
 	return fs.existsSync(configPath);
 }
 

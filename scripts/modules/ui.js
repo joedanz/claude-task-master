@@ -677,7 +677,7 @@ function displayHelp() {
 
 	configTable.push(
 		[
-			`${chalk.yellow('.taskmasterconfig')}${chalk.reset('')}`,
+			`${chalk.yellow('.taskmaster/config.yaml')}${chalk.reset('')}`,
 			`${chalk.white('AI model configuration file (project root)')}${chalk.reset('')}`,
 			`${chalk.dim('Managed by models cmd')}${chalk.reset('')}`
 		],
@@ -894,12 +894,7 @@ async function displayNextTask(tasksPath) {
 				'padding-bottom': 0,
 				compact: true
 			},
-			chars: {
-				mid: '',
-				'left-mid': '',
-				'mid-mid': '',
-				'right-mid': ''
-			},
+			chars: { mid: '', 'left-mid': '', 'mid-mid': '', 'right-mid': '' },
 			wordWrap: true
 		});
 
@@ -927,19 +922,16 @@ async function displayNextTask(tasksPath) {
 								foundSubtask.status === 'done' ||
 								foundSubtask.status === 'completed';
 							const isInProgress = foundSubtask.status === 'in-progress';
-
-							// Use consistent color formatting instead of emojis
-							if (isDone) {
-								return chalk.green.bold(`${nextTask.id}.${depId}`);
-							} else if (isInProgress) {
-								return chalk.hex('#FFA500').bold(`${nextTask.id}.${depId}`);
-							} else {
-								return chalk.red.bold(`${nextTask.id}.${depId}`);
-							}
+							const color = isDone
+								? chalk.green.bold
+								: isInProgress
+									? chalk.hex('#FFA500').bold
+									: chalk.red.bold;
+							return color(`${nextTask.id}.${depId}`);
 						}
 						return chalk.red(`${nextTask.id}.${depId} (Not found)`);
 					}
-					return depId;
+					return depId; // Assume it's a top-level task ID if not a number < 100
 				});
 
 				// Join the formatted dependencies directly instead of passing to formatDependenciesWithStatus again
@@ -1231,6 +1223,7 @@ async function displayTaskById(tasksPath, taskId, statusFilter = null) {
 			const statusColor = statusColorMap[st.status || 'pending'] || chalk.white;
 			let subtaskDeps = 'None';
 			if (st.dependencies && st.dependencies.length > 0) {
+				// Format dependencies with correct notation
 				const formattedDeps = st.dependencies.map((depId) => {
 					// Use the original, unfiltered list for dependency status lookup
 					const sourceListForDeps = originalSubtasks || task.subtasks;
@@ -1790,7 +1783,7 @@ function displayApiKeyStatus(statusReport) {
 	console.log(table.toString());
 	console.log(
 		chalk.gray(
-			'  Note: Some providers (e.g., Azure, Ollama) may require additional endpoint configuration in .taskmasterconfig.'
+			'  Note: Some providers (e.g., Azure, Ollama) may require additional endpoint configuration in .taskmaster/config.yaml.'
 		)
 	);
 }

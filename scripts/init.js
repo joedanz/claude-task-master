@@ -25,6 +25,7 @@ import gradient from 'gradient-string';
 import { isSilentMode } from './modules/utils.js';
 import { convertAllCursorRulesToRooRules } from './modules/rule-transformer.js';
 import { execSync } from 'child_process';
+import { writeConfig, getDefaultConfig } from './modules/config-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -355,6 +356,8 @@ async function initializeProject(options = {}) {
 		console.log('===== DEBUG: INITIALIZE PROJECT OPTIONS RECEIVED =====');
 		console.log('Full options object:', JSON.stringify(options));
 		console.log('options.yes:', options.yes);
+		console.log('options.name:', options.name);
+		console.log('options.description:', options.description);
 		console.log('==================================================');
 	}
 
@@ -504,14 +507,19 @@ function createProjectStructure(addAliases, dryRun) {
 		replacements
 	);
 
-	// Copy .taskmasterconfig with project name
-	copyTemplateFile(
-		'.taskmasterconfig',
-		path.join(targetDir, '.taskmasterconfig'),
-		{
-			...replacements
+	// Generate default config using config-manager
+	log('info', 'Generating default .taskmaster/config.yaml...');
+	try {
+		const defaultConfig = getDefaultConfig(); // Get defaults
+		if (!writeConfig(defaultConfig, targetDir)) {
+			// Write using targetDir as projectRoot
+			throw new Error('Failed to write default configuration.');
 		}
-	);
+		log('success', 'Default .taskmaster/config.yaml generated.');
+	} catch (error) {
+		log('error', 'Error generating default config:', error.message);
+		// Decide if this is a critical failure or can be warned
+	}
 
 	// Copy .gitignore
 	copyTemplateFile('gitignore', path.join(targetDir, '.gitignore'));

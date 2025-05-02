@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { jest } from '@jest/globals';
 import { fileURLToPath } from 'url';
+import yaml from 'js-yaml'; // Import YAML parser
 
 // --- Read REAL supported-models.json data BEFORE mocks ---
 const __filename = fileURLToPath(import.meta.url); // Get current file path
@@ -55,7 +56,13 @@ import fsMocked from 'fs';
 
 // --- Test Data (Keep as is, ensure DEFAULT_CONFIG is accurate) ---
 const MOCK_PROJECT_ROOT = '/mock/project';
-const MOCK_CONFIG_PATH = path.join(MOCK_PROJECT_ROOT, '.taskmasterconfig');
+const MOCK_CONFIG_DIR = '.taskmaster';
+const MOCK_CONFIG_FILENAME = 'config.yaml';
+const MOCK_CONFIG_PATH = path.join(
+	MOCK_PROJECT_ROOT,
+	MOCK_CONFIG_DIR,
+	MOCK_CONFIG_FILENAME
+);
 
 // Updated DEFAULT_CONFIG reflecting the implementation
 const DEFAULT_CONFIG = {
@@ -146,11 +153,18 @@ let consoleWarnSpy;
 let fsReadFileSyncSpy;
 let fsWriteFileSyncSpy;
 let fsExistsSyncSpy;
+let fsMkdirSyncSpy;
 
 beforeAll(() => {
 	// Set up console spies
 	consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 	consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+	// Set up fs spies before any tests run
+	fsReadFileSyncSpy = jest.spyOn(fsMocked, 'readFileSync');
+	fsWriteFileSyncSpy = jest.spyOn(fsMocked, 'writeFileSync');
+	fsExistsSyncSpy = jest.spyOn(fsMocked, 'existsSync');
+	fsMkdirSyncSpy = jest.spyOn(fsMocked, 'mkdirSync');
 });
 
 afterAll(() => {
@@ -170,6 +184,7 @@ beforeEach(() => {
 	fsExistsSyncSpy = jest.spyOn(fsMocked, 'existsSync');
 	fsReadFileSyncSpy = jest.spyOn(fsMocked, 'readFileSync');
 	fsWriteFileSyncSpy = jest.spyOn(fsMocked, 'writeFileSync');
+	fsMkdirSyncSpy = jest.spyOn(fsMocked, 'mkdirSync');
 
 	// --- Default Mock Implementations ---
 	mockFindProjectRoot.mockReturnValue(MOCK_PROJECT_ROOT); // Default for utils.findProjectRoot
@@ -183,7 +198,7 @@ beforeEach(() => {
 			return REAL_SUPPORTED_MODELS_CONTENT;
 		} else if (filePath === MOCK_CONFIG_PATH) {
 			// Still mock the .taskmasterconfig reads
-			return JSON.stringify(DEFAULT_CONFIG); // Default behavior
+			return yaml.dump(DEFAULT_CONFIG); // Default behavior
 		}
 		// Throw for unexpected reads - helps catch errors
 		throw new Error(`Unexpected fs.readFileSync call in test: ${filePath}`);
@@ -191,6 +206,9 @@ beforeEach(() => {
 
 	// Default writeFileSync: Do nothing, just allow calls
 	fsWriteFileSyncSpy.mockImplementation(() => {});
+
+	// Default mkdirSync: Do nothing, just allow calls
+	fsMkdirSyncSpy.mockImplementation(() => {});
 });
 
 // --- Validation Functions ---
@@ -263,7 +281,7 @@ describe('Validation Functions', () => {
 
 // --- getConfig Tests ---
 describe('getConfig Tests', () => {
-	test('should return default config if .taskmasterconfig does not exist', () => {
+	test('should return default config if config file does not exist', () => {
 		// Arrange
 		fsExistsSyncSpy.mockReturnValue(false);
 		// findProjectRoot mock is set in beforeEach
@@ -300,23 +318,22 @@ describe('getConfig Tests', () => {
 		); // Adjusted expected warning
 	});
 
-	test('should read and merge valid config file with defaults', () => {
+	test('should read and merge valid YAML config file with defaults', () => {
 		// Arrange: Override readFileSync for this test
 		fsReadFileSyncSpy.mockImplementation((filePath) => {
-			if (filePath === MOCK_CONFIG_PATH)
-				return JSON.stringify(VALID_CUSTOM_CONFIG);
+			if (filePath === MOCK_CONFIG_PATH) return yaml.dump(VALID_CUSTOM_CONFIG);
 			if (path.basename(filePath) === 'supported-models.json') {
 				// Provide necessary models for validation within getConfig
 				return JSON.stringify({
 					openai: [{ id: 'gpt-4o' }],
 					google: [{ id: 'gemini-1.5-pro-latest' }],
-					perplexity: [{ id: 'sonar-pro' }],
 					anthropic: [
 						{ id: 'claude-3-opus-20240229' },
 						{ id: 'claude-3-5-sonnet' },
 						{ id: 'claude-3-7-sonnet-20250219' },
 						{ id: 'claude-3-5-sonnet' }
 					],
+					perplexity: [{ id: 'sonar-pro' }],
 					ollama: [],
 					openrouter: []
 				});
@@ -352,10 +369,10 @@ describe('getConfig Tests', () => {
 		expect(fsReadFileSyncSpy).toHaveBeenCalledWith(MOCK_CONFIG_PATH, 'utf-8');
 	});
 
-	test('should merge defaults for partial config file', () => {
+	test('should merge defaults for partial YAML config file', () => {
 		// Arrange
 		fsReadFileSyncSpy.mockImplementation((filePath) => {
-			if (filePath === MOCK_CONFIG_PATH) return JSON.stringify(PARTIAL_CONFIG);
+			if (filePath === MOCK_CONFIG_PATH) return yaml.dump(PARTIAL_CONFIG);
 			if (path.basename(filePath) === 'supported-models.json') {
 				return JSON.stringify({
 					openai: [{ id: 'gpt-4-turbo' }],
@@ -389,10 +406,10 @@ describe('getConfig Tests', () => {
 		expect(fsReadFileSyncSpy).toHaveBeenCalledWith(MOCK_CONFIG_PATH, 'utf-8');
 	});
 
-	test('should handle JSON parsing error and return defaults', () => {
+	test('should handle YAML parsing error and return defaults', () => {
 		// Arrange
 		fsReadFileSyncSpy.mockImplementation((filePath) => {
-			if (filePath === MOCK_CONFIG_PATH) return 'invalid json';
+			if (filePath === MOCK_CONFIG_PATH) return 'invalid yaml';
 			// Mock models read needed for initial load before parse error
 			if (path.basename(filePath) === 'supported-models.json') {
 				return JSON.stringify({
@@ -452,7 +469,7 @@ describe('getConfig Tests', () => {
 		// Arrange
 		fsReadFileSyncSpy.mockImplementation((filePath) => {
 			if (filePath === MOCK_CONFIG_PATH)
-				return JSON.stringify(INVALID_PROVIDER_CONFIG);
+				return yaml.dump(INVALID_PROVIDER_CONFIG);
 			if (path.basename(filePath) === 'supported-models.json') {
 				return JSON.stringify({
 					perplexity: [{ id: 'llama-3-sonar-large-32k-online' }],
@@ -494,11 +511,10 @@ describe('getConfig Tests', () => {
 });
 
 // --- writeConfig Tests ---
-describe('writeConfig', () => {
-	test('should write valid config to file', () => {
-		// Arrange (Default mocks are sufficient)
-		// findProjectRoot mock set in beforeEach
-		fsWriteFileSyncSpy.mockImplementation(() => {}); // Ensure it doesn't throw
+describe('writeConfig Tests', () => {
+	test('should write the config object to the correct YAML file', () => {
+		// Arrange: Mock necessary functions
+		fsExistsSyncSpy.mockReturnValue(false); // Assume dir needs creation
 
 		// Act
 		const success = configManager.writeConfig(
@@ -508,9 +524,13 @@ describe('writeConfig', () => {
 
 		// Assert
 		expect(success).toBe(true);
+		expect(fsMkdirSyncSpy).toHaveBeenCalledWith(
+			path.dirname(MOCK_CONFIG_PATH),
+			{ recursive: true }
+		);
 		expect(fsWriteFileSyncSpy).toHaveBeenCalledWith(
 			MOCK_CONFIG_PATH,
-			JSON.stringify(VALID_CUSTOM_CONFIG, null, 2) // writeConfig stringifies
+			yaml.dump(VALID_CUSTOM_CONFIG) // Ensure YAML content is written
 		);
 		expect(consoleErrorSpy).not.toHaveBeenCalled();
 	});
@@ -560,8 +580,7 @@ describe('Getter Functions', () => {
 	test('getMainProvider should return provider from config', () => {
 		// Arrange: Set up readFileSync to return VALID_CUSTOM_CONFIG
 		fsReadFileSyncSpy.mockImplementation((filePath) => {
-			if (filePath === MOCK_CONFIG_PATH)
-				return JSON.stringify(VALID_CUSTOM_CONFIG);
+			if (filePath === MOCK_CONFIG_PATH) return yaml.dump(VALID_CUSTOM_CONFIG);
 			if (path.basename(filePath) === 'supported-models.json') {
 				return JSON.stringify({
 					openai: [{ id: 'gpt-4o' }],
@@ -591,8 +610,7 @@ describe('Getter Functions', () => {
 	test('getLogLevel should return logLevel from config', () => {
 		// Arrange: Set up readFileSync to return VALID_CUSTOM_CONFIG
 		fsReadFileSyncSpy.mockImplementation((filePath) => {
-			if (filePath === MOCK_CONFIG_PATH)
-				return JSON.stringify(VALID_CUSTOM_CONFIG);
+			if (filePath === MOCK_CONFIG_PATH) return yaml.dump(VALID_CUSTOM_CONFIG);
 			if (path.basename(filePath) === 'supported-models.json') {
 				// Provide enough mock model data for validation within getConfig
 				return JSON.stringify({
@@ -625,14 +643,14 @@ describe('Getter Functions', () => {
 
 // --- isConfigFilePresent Tests ---
 describe('isConfigFilePresent', () => {
-	test('should return true if config file exists', () => {
+	test('should return true if YAML config file exists', () => {
 		fsExistsSyncSpy.mockReturnValue(true);
 		// findProjectRoot mock set in beforeEach
 		expect(configManager.isConfigFilePresent(MOCK_PROJECT_ROOT)).toBe(true);
 		expect(fsExistsSyncSpy).toHaveBeenCalledWith(MOCK_CONFIG_PATH);
 	});
 
-	test('should return false if config file does not exist', () => {
+	test('should return false if YAML config file does not exist', () => {
 		fsExistsSyncSpy.mockReturnValue(false);
 		// findProjectRoot mock set in beforeEach
 		expect(configManager.isConfigFilePresent(MOCK_PROJECT_ROOT)).toBe(false);

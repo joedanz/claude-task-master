@@ -1631,6 +1631,7 @@ function registerCommands(programInstance) {
 				}
 			} catch (error) {
 				console.error(chalk.red(`Error: ${error.message}`));
+				showAddSubtaskHelp();
 				process.exit(1);
 			}
 		})
@@ -1741,10 +1742,12 @@ function registerCommands(programInstance) {
 									'\n' +
 									chalk.white(`Status: ${getStatusWithColor(result.status)}`) +
 									'\n' +
-									chalk.white(
-										`Dependencies: ${result.dependencies.join(', ')}`
-									) +
-									'\n\n' +
+									(result.dependencies.length > 0
+										? chalk.white(
+												`Dependencies: ${result.dependencies.join(', ')}`
+											) + '\n'
+										: '') +
+									'\n' +
 									chalk.white.bold('Next Steps:') +
 									'\n' +
 									chalk.cyan(
@@ -2514,7 +2517,7 @@ async function runCLI(argv = process.argv) {
 
 		// Setup and parse
 		// NOTE: getConfig() might be called during setupCLI->registerCommands if commands need config
-		// This means the ConfigurationError might be thrown here if .taskmasterconfig is missing.
+		// This means the ConfigurationError might be thrown here if .taskmaster/config.yaml is missing.
 		const programInstance = setupCLI();
 		await programInstance.parseAsync(argv);
 
@@ -2534,7 +2537,7 @@ async function runCLI(argv = process.argv) {
 					chalk.red.bold('Configuration Update Required!') +
 						'\n\n' +
 						chalk.white('Taskmaster now uses the ') +
-						chalk.yellow.bold('.taskmasterconfig') +
+						chalk.yellow.bold('.taskmaster/config.yaml') +
 						chalk.white(
 							' file in your project root for AI model choices and settings.\n\n' +
 								'This file appears to be '
@@ -2548,7 +2551,7 @@ async function runCLI(argv = process.argv) {
 						chalk.white.bold('Key Points:') +
 						'\n' +
 						chalk.white('*   ') +
-						chalk.yellow.bold('.taskmasterconfig') +
+						chalk.yellow.bold('.taskmaster/config.yaml') +
 						chalk.white(
 							': Stores your AI model settings (do not manually edit)\n'
 						) +
