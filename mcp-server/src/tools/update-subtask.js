@@ -4,12 +4,10 @@
  */
 
 import { z } from 'zod';
-import {
-	handleApiResult,
-	createErrorResponse,
-	getProjectRootFromSession
-} from './utils.js';
+import { handleApiResult, createErrorResponse } from './utils.js';
 import { updateSubtaskByIdDirect } from '../core/task-master-core.js';
+import { findTasksJsonPath } from '../core/utils/path-utils.js';
+import path from 'path';
 
 /**
  * Register the update-subtask tool with the MCP server
@@ -19,12 +17,12 @@ export function registerUpdateSubtaskTool(server) {
 	server.addTool({
 		name: 'update_subtask',
 		description:
-			'Appends additional information to a specific subtask without replacing existing content',
+			'Appends timestamped information to a specific subtask without replacing existing content',
 		parameters: z.object({
 			id: z
 				.string()
 				.describe(
-					'ID of the subtask to update in format "parentId.subtaskId" (e.g., "5.2")'
+					'ID of the subtask to update in format "parentId.subtaskId" (e.g., "5.2"). Parent ID is the ID of the task that contains the subtask.'
 				),
 			prompt: z.string().describe('Information to add to the subtask'),
 			research: z
@@ -34,26 +32,47 @@ export function registerUpdateSubtaskTool(server) {
 			file: z.string().optional().describe('Absolute path to the tasks file'),
 			projectRoot: z
 				.string()
-				.optional()
-				.describe(
-					'Root directory of the project (default: current working directory)'
-				)
+				.describe('The directory of the project. Must be an absolute path.')
 		}),
 		execute: async (args, { log, session }) => {
+			const toolName = 'update_subtask';
 			try {
 				log.info(`Updating subtask with args: ${JSON.stringify(args)}`);
 
-				let rootFolder = getProjectRootFromSession(session, log);
+				// 1. Get Project Root
+				const rootFolder = args.projectRoot;
+				if (!rootFolder || !path.isAbsolute(rootFolder)) {
+					log.error(
+						`${toolName}: projectRoot is required and must be absolute.`
+					);
+					return createErrorResponse(
+						'projectRoot is required and must be absolute.'
+					);
+				}
+				log.info(`${toolName}: Project root: ${rootFolder}`);
 
-				if (!rootFolder && args.projectRoot) {
-					rootFolder = args.projectRoot;
-					log.info(`Using project root from args as fallback: ${rootFolder}`);
+				// 2. Resolve Tasks Path
+				let tasksJsonPath;
+				try {
+					tasksJsonPath = findTasksJsonPath(
+						{ projectRoot: rootFolder, file: args.file },
+						log
+					);
+				} catch (error) {
+					log.error(`${toolName}: Error finding tasks.json: ${error.message}`);
+					return createErrorResponse(
+						`Failed to find tasks.json within project root '${rootFolder}': ${error.message}`
+					);
 				}
 
+				// 3. Call Direct Function - Include projectRoot
 				const result = await updateSubtaskByIdDirect(
 					{
-						projectRoot: rootFolder,
-						...args
+						tasksJsonPath: tasksJsonPath,
+						id: args.id,
+						prompt: args.prompt,
+						research: args.research,
+						projectRoot: rootFolder
 					},
 					log,
 					{ session }
@@ -69,8 +88,12 @@ export function registerUpdateSubtaskTool(server) {
 
 				return handleApiResult(result, log, 'Error updating subtask');
 			} catch (error) {
-				log.error(`Error in update_subtask tool: ${error.message}`);
-				return createErrorResponse(error.message);
+				log.error(
+					`Critical error in ${toolName} tool execute: ${error.message}`
+				);
+				return createErrorResponse(
+					`Internal tool error (${toolName}): ${error.message}`
+				);
 			}
 		}
 	});

@@ -131,7 +131,7 @@ jest.mock('../../../scripts/modules/utils.js', () => ({
 	enableSilentMode: mockEnableSilentMode,
 	disableSilentMode: mockDisableSilentMode,
 	CONFIG: {
-		model: 'claude-3-sonnet-20240229',
+		model: 'claude-3-7-sonnet-20250219',
 		maxTokens: 64000,
 		temperature: 0.2,
 		defaultSubtasks: 5
@@ -144,11 +144,11 @@ jest.mock('../../../mcp-server/src/core/utils/path-utils.js', () => ({
 }));
 
 // Mock the AI module to prevent any real API calls
-jest.mock('../../../scripts/modules/ai-services.js', () => ({
-	getAnthropicClient: mockGetAnthropicClient,
-	getConfiguredAnthropicClient: mockGetConfiguredAnthropicClient,
-	_handleAnthropicStream: mockHandleAnthropicStream,
-	parseSubtasksFromText: mockParseSubtasksFromText
+jest.mock('../../../scripts/modules/ai-services-unified.js', () => ({
+	// Mock the functions exported by ai-services-unified.js as needed
+	// For example, if you are testing a function that uses generateTextService:
+	generateTextService: jest.fn().mockResolvedValue('Mock AI Response')
+	// Add other mocks for generateObjectService, streamTextService if used
 }));
 
 // Mock task-manager.js to avoid real operations
