@@ -4,13 +4,9 @@
  */
 
 import { z } from 'zod';
-import {
-	handleApiResult,
-	createErrorResponse,
-	getProjectRootFromSession
-} from './utils.js';
+import { handleApiResult, createErrorResponse } from './utils.js';
 import { expandTaskDirect } from '../core/task-master-core.js';
-import fs from 'fs';
+import { findTasksJsonPath } from '../core/utils/path-utils.js';
 import path from 'path';
 
 /**
@@ -23,67 +19,85 @@ export function registerExpandTaskTool(server) {
 		description: 'Expand a task into subtasks for detailed implementation',
 		parameters: z.object({
 			id: z.string().describe('ID of task to expand'),
-			num: z
-				.union([z.string(), z.number()])
-				.optional()
-				.describe('Number of subtasks to generate'),
+			num: z.string().optional().describe('Number of subtasks to generate'),
 			research: z
 				.boolean()
 				.optional()
-				.describe('Use Perplexity AI for research-backed generation'),
+				.default(false)
+				.describe('Use research role for generation'),
 			prompt: z
 				.string()
 				.optional()
 				.describe('Additional context for subtask generation'),
-			file: z.string().optional().describe('Absolute path to the tasks file'),
-			projectRoot: z
+			file: z
 				.string()
 				.optional()
 				.describe(
-					'Root directory of the project (default: current working directory)'
-				)
+					'Path to the tasks file relative to project root (e.g., tasks/tasks.json)'
+				),
+			projectRoot: z
+				.string()
+				.describe('The directory of the project. Must be an absolute path.'),
+			force: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe('Force expansion even if subtasks exist')
 		}),
 		execute: async (args, { log, session }) => {
 			try {
 				log.info(`Starting expand-task with args: ${JSON.stringify(args)}`);
 
-				// Get project root from session
-				let rootFolder = getProjectRootFromSession(session, log);
-
-				if (!rootFolder && args.projectRoot) {
-					rootFolder = args.projectRoot;
-					log.info(`Using project root from args as fallback: ${rootFolder}`);
+				const rootFolder = args.projectRoot;
+				if (!rootFolder || !path.isAbsolute(rootFolder)) {
+					log.error(
+						`expand-task: projectRoot is required and must be absolute.`
+					);
+					return createErrorResponse(
+						'projectRoot is required and must be absolute.'
+					);
 				}
 
-				log.info(`Project root resolved to: ${rootFolder}`);
-
-				// Check for tasks.json in the standard locations
-				const tasksJsonPath = path.join(rootFolder, 'tasks', 'tasks.json');
-
-				if (fs.existsSync(tasksJsonPath)) {
-					log.info(`Found tasks.json at ${tasksJsonPath}`);
-					// Add the file parameter directly to args
-					args.file = tasksJsonPath;
-				} else {
-					log.warn(`Could not find tasks.json at ${tasksJsonPath}`);
+				// Resolve the path to tasks.json using the utility
+				let tasksJsonPath;
+				try {
+					tasksJsonPath = findTasksJsonPath(
+						{ projectRoot: rootFolder, file: args.file },
+						log
+					);
+					log.info(`expand-task: Resolved tasks path: ${tasksJsonPath}`);
+				} catch (error) {
+					log.error(`expand-task: Error finding tasks.json: ${error.message}`);
+					return createErrorResponse(
+						`Failed to find tasks.json within project root '${rootFolder}': ${error.message}`
+					);
 				}
 
-				// Call direct function with only session in the context, not reportProgress
-				// Use the pattern recommended in the MCP guidelines
 				const result = await expandTaskDirect(
 					{
-						...args,
+						tasksJsonPath: tasksJsonPath,
+						id: args.id,
+						num: args.num,
+						research: args.research,
+						prompt: args.prompt,
+						force: args.force,
 						projectRoot: rootFolder
 					},
 					log,
 					{ session }
-				); // Only pass session, NOT reportProgress
+				);
 
-				// Return the result
+				log.info(
+					`expand-task: Direct function result: success=${result.success}`
+				);
 				return handleApiResult(result, log, 'Error expanding task');
 			} catch (error) {
-				log.error(`Error in expand task tool: ${error.message}`);
-				return createErrorResponse(error.message);
+				log.error(
+					`Critical error in ${toolName} tool execute: ${error.message}`
+				);
+				return createErrorResponse(
+					`Internal tool error (${toolName}): ${error.message}`
+				);
 			}
 		}
 	});
