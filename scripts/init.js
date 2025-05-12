@@ -174,7 +174,12 @@ alias taskmaster='task-master'
 }
 
 // Function to copy a file from the package to the target directory
-function copyTemplateFile(templateName, targetPath, replacements = {}, storeTasksInGit) {
+function copyTemplateFile(
+	templateName,
+	targetPath,
+	replacements = {},
+	storeTasksInGit
+) {
 	// Get the file content from the appropriate source directory
 	let sourcePath;
 
@@ -274,10 +279,18 @@ function copyTemplateFile(templateName, targetPath, replacements = {}, storeTask
 		// Split template lines
 		let templateLines = content.split('\n');
 		// Adjust last two lines
-		const taskJsonIdx = templateLines.findIndex(l => l.trim().replace(/^#/, '').trim() === 'tasks.json');
-		const tasksDirIdx = templateLines.findIndex(l => l.trim().replace(/^#/, '').trim() === 'tasks/');
-		if (taskJsonIdx !== -1) templateLines[taskJsonIdx] = (storeTasksInGit ? '# tasks.json' : 'tasks.json');
-		if (tasksDirIdx !== -1) templateLines[tasksDirIdx] = (storeTasksInGit ? '# tasks/' : 'tasks/');
+		const taskJsonIdx = templateLines.findIndex(
+			(l) => l.trim().replace(/^#/, '').trim() === 'tasks.json'
+		);
+		const tasksDirIdx = templateLines.findIndex(
+			(l) => l.trim().replace(/^#/, '').trim() === 'tasks/'
+		);
+		if (taskJsonIdx !== -1)
+			templateLines[taskJsonIdx] = storeTasksInGit
+				? '# tasks.json'
+				: 'tasks.json';
+		if (tasksDirIdx !== -1)
+			templateLines[tasksDirIdx] = storeTasksInGit ? '# tasks/' : 'tasks/';
 
 		// Read existing .gitignore
 		let existingLines = [];
@@ -285,23 +298,29 @@ function copyTemplateFile(templateName, targetPath, replacements = {}, storeTask
 			existingLines = fs.readFileSync(targetPath, 'utf8').split('\n');
 		}
 		// Remove any version (commented or not) of the two lines from existingLines
-		existingLines = existingLines.filter(l => {
+		existingLines = existingLines.filter((l) => {
 			const trimmed = l.trim().replace(/^#/, '').trim();
 			return trimmed !== 'tasks.json' && trimmed !== 'tasks/';
 		});
 		// Prepare the correct lines from templateLines
-		const taskLines = templateLines.filter(l => {
-			const trimmed = l.trim().replace(/^#/, '').trim();
-			return trimmed === 'tasks.json' || trimmed === 'tasks/';
-		}).filter(l => {
-			const trimmed = l.trim().replace(/^#/, '').trim();
-			return !existingLines.some(e => e.trim().replace(/^#/, '').trim() === trimmed);
-		});
+		const taskLines = templateLines
+			.filter((l) => {
+				const trimmed = l.trim().replace(/^#/, '').trim();
+				return trimmed === 'tasks.json' || trimmed === 'tasks/';
+			})
+			.filter((l) => {
+				const trimmed = l.trim().replace(/^#/, '').trim();
+				return !existingLines.some(
+					(e) => e.trim().replace(/^#/, '').trim() === trimmed
+				);
+			});
 		// Only add the comment if at least one line is being added
 		let finalLines = [...existingLines];
 		if (taskLines.length > 0) {
 			// Only add the comment if not already present
-			const hasTaskFilesComment = finalLines.some(l => l.trim() === '# Task files');
+			const hasTaskFilesComment = finalLines.some(
+				(l) => l.trim() === '# Task files'
+			);
 			if (!hasTaskFilesComment) {
 				finalLines.push('# Task files');
 			}
@@ -409,7 +428,7 @@ async function initializeProject(options = {}) {
 
 	let resolvedStoreTasksInGit = options.storeTasksInGit;
 
-if (skipPrompts) {
+	if (skipPrompts) {
 		if (!isSilentMode()) {
 			console.log('SKIPPING PROMPTS - Using defaults or provided values');
 		}
@@ -435,7 +454,6 @@ if (skipPrompts) {
 			};
 		}
 
-
 		// Determine storeTasksInGit: use CLI option if provided, otherwise prompt
 		let resolvedStoreTasksInGit = options.storeTasksInGit;
 		if (typeof resolvedStoreTasksInGit === 'undefined') {
@@ -443,16 +461,17 @@ if (skipPrompts) {
 				input: process.stdin,
 				output: process.stdout
 			});
-			const storeTasksAnswer = await new Promise(resolve => {
+			const storeTasksAnswer = await new Promise((resolve) => {
 				rl.question(
 					'Would you like your tasks.json and task files stored in Git? (y/N): ',
-					answer => {
+					(answer) => {
 						rl.close();
 						resolve(answer.trim().toLowerCase());
 					}
 				);
 			});
-			resolvedStoreTasksInGit = storeTasksAnswer === 'y' || storeTasksAnswer === 'yes';
+			resolvedStoreTasksInGit =
+				storeTasksAnswer === 'y' || storeTasksAnswer === 'yes';
 		}
 		createProjectStructure(addAliases, dryRun, resolvedStoreTasksInGit);
 	} else {
@@ -479,13 +498,17 @@ if (skipPrompts) {
 					rl,
 					'Would you like your tasks.json and task files stored in Git? (y/N): '
 				);
-				resolvedStoreTasksInGit = storeTasksAnswer.trim().toLowerCase() === 'y' || storeTasksAnswer.trim().toLowerCase() === 'yes';
+				resolvedStoreTasksInGit =
+					storeTasksAnswer.trim().toLowerCase() === 'y' ||
+					storeTasksAnswer.trim().toLowerCase() === 'yes';
 			}
 
 			// Confirm settings after all questions
 			console.log('\nTask Master Project settings:');
 			console.log(
-				chalk.blue('Add shell aliases (so you can use "tm" instead of "task-master"): '),
+				chalk.blue(
+					'Add shell aliases (so you can use "tm" instead of "task-master"): '
+				),
 				chalk.white(addAliasesPrompted ? 'Yes' : 'No')
 			);
 			console.log(
@@ -521,7 +544,11 @@ if (skipPrompts) {
 			}
 
 			// Create structure using only necessary values
-			createProjectStructure(addAliasesPrompted, dryRun, resolvedStoreTasksInGit);
+			createProjectStructure(
+				addAliasesPrompted,
+				dryRun,
+				resolvedStoreTasksInGit
+			);
 		} catch (error) {
 			rl.close();
 			log('error', `Error during initialization process: ${error.message}`);
@@ -589,7 +616,12 @@ function createProjectStructure(addAliases, dryRun, storeTasksInGit) {
 	);
 
 	// Copy .gitignore with dynamic tasks lines
-	copyTemplateFile('gitignore', path.join(targetDir, '.gitignore'), {}, storeTasksInGit);
+	copyTemplateFile(
+		'gitignore',
+		path.join(targetDir, '.gitignore'),
+		{},
+		storeTasksInGit
+	);
 
 	// Copy dev_workflow.mdc
 	copyTemplateFile(
