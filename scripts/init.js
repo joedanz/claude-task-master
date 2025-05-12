@@ -174,7 +174,7 @@ alias taskmaster='task-master'
 }
 
 // Function to copy a file from the package to the target directory
-function copyTemplateFile(templateName, targetPath, replacements = {}) {
+function copyTemplateFile(templateName, targetPath, replacements = {}, storeTasksInGit) {
 	// Get the file content from the appropriate source directory
 	let sourcePath;
 
@@ -268,6 +268,49 @@ function copyTemplateFile(templateName, targetPath, replacements = {}) {
 		const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
 		content = content.replace(regex, value);
 	});
+
+	// Special handling for .gitignore: adjust last two lines and merge
+	if (path.basename(targetPath) === '.gitignore') {
+		// Split template lines
+		let templateLines = content.split('\n');
+		// Adjust last two lines
+		const taskJsonIdx = templateLines.findIndex(l => l.trim().replace(/^#/, '').trim() === 'tasks.json');
+		const tasksDirIdx = templateLines.findIndex(l => l.trim().replace(/^#/, '').trim() === 'tasks/');
+		if (taskJsonIdx !== -1) templateLines[taskJsonIdx] = (storeTasksInGit ? '# tasks.json' : 'tasks.json');
+		if (tasksDirIdx !== -1) templateLines[tasksDirIdx] = (storeTasksInGit ? '# tasks/' : 'tasks/');
+
+		// Read existing .gitignore
+		let existingLines = [];
+		if (fs.existsSync(targetPath)) {
+			existingLines = fs.readFileSync(targetPath, 'utf8').split('\n');
+		}
+		// Remove any version (commented or not) of the two lines from existingLines
+		existingLines = existingLines.filter(l => {
+			const trimmed = l.trim().replace(/^#/, '').trim();
+			return trimmed !== 'tasks.json' && trimmed !== 'tasks/';
+		});
+		// Prepare the correct lines from templateLines
+		const taskLines = templateLines.filter(l => {
+			const trimmed = l.trim().replace(/^#/, '').trim();
+			return trimmed === 'tasks.json' || trimmed === 'tasks/';
+		}).filter(l => {
+			const trimmed = l.trim().replace(/^#/, '').trim();
+			return !existingLines.some(e => e.trim().replace(/^#/, '').trim() === trimmed);
+		});
+		// Only add the comment if at least one line is being added
+		let finalLines = [...existingLines];
+		if (taskLines.length > 0) {
+			// Only add the comment if not already present
+			const hasTaskFilesComment = finalLines.some(l => l.trim() === '# Task files');
+			if (!hasTaskFilesComment) {
+				finalLines.push('# Task files');
+			}
+			finalLines = [...finalLines, ...taskLines];
+		}
+		fs.writeFileSync(targetPath, finalLines.join('\n'));
+		log('info', `Updated ${targetPath} according to user preference`);
+		return;
+	}
 
 	// Handle special files that should be merged instead of overwritten
 	if (fs.existsSync(targetPath)) {
@@ -364,7 +407,9 @@ async function initializeProject(options = {}) {
 	// 	console.log('Skip prompts determined:', skipPrompts);
 	// }
 
-	if (skipPrompts) {
+	let resolvedStoreTasksInGit = options.storeTasksInGit;
+
+if (skipPrompts) {
 		if (!isSilentMode()) {
 			console.log('SKIPPING PROMPTS - Using defaults or provided values');
 		}
@@ -390,7 +435,26 @@ async function initializeProject(options = {}) {
 			};
 		}
 
-		createProjectStructure(addAliases, dryRun);
+
+		// Determine storeTasksInGit: use CLI option if provided, otherwise prompt
+		let resolvedStoreTasksInGit = options.storeTasksInGit;
+		if (typeof resolvedStoreTasksInGit === 'undefined') {
+			const rl = readline.createInterface({
+				input: process.stdin,
+				output: process.stdout
+			});
+			const storeTasksAnswer = await new Promise(resolve => {
+				rl.question(
+					'Would you like your tasks.json and task files stored in Git? (y/N): ',
+					answer => {
+						rl.close();
+						resolve(answer.trim().toLowerCase());
+					}
+				);
+			});
+			resolvedStoreTasksInGit = storeTasksAnswer === 'y' || storeTasksAnswer === 'yes';
+		}
+		createProjectStructure(addAliases, dryRun, resolvedStoreTasksInGit);
 	} else {
 		// Interactive logic
 		log('info', 'Required options not provided, proceeding with prompts.');
@@ -409,13 +473,24 @@ async function initializeProject(options = {}) {
 			);
 			const addAliasesPrompted = addAliasesInput.trim().toLowerCase() !== 'n';
 
-			// Confirm settings...
+			// Prompt for storeTasksInGit at the end if not provided
+			if (typeof resolvedStoreTasksInGit === 'undefined') {
+				const storeTasksAnswer = await promptQuestion(
+					rl,
+					'Would you like your tasks.json and task files stored in Git? (y/N): '
+				);
+				resolvedStoreTasksInGit = storeTasksAnswer.trim().toLowerCase() === 'y' || storeTasksAnswer.trim().toLowerCase() === 'yes';
+			}
+
+			// Confirm settings after all questions
 			console.log('\nTask Master Project settings:');
 			console.log(
-				chalk.blue(
-					'Add shell aliases (so you can use "tm" instead of "task-master"):'
-				),
+				chalk.blue('Add shell aliases (so you can use "tm" instead of "task-master"): '),
 				chalk.white(addAliasesPrompted ? 'Yes' : 'No')
+			);
+			console.log(
+				chalk.blue('Store tasks.json/tasks/ in Git: '),
+				chalk.white(resolvedStoreTasksInGit ? 'Yes' : 'No')
 			);
 
 			const confirmInput = await promptQuestion(
@@ -446,7 +521,7 @@ async function initializeProject(options = {}) {
 			}
 
 			// Create structure using only necessary values
-			createProjectStructure(addAliasesPrompted, dryRun);
+			createProjectStructure(addAliasesPrompted, dryRun, resolvedStoreTasksInGit);
 		} catch (error) {
 			rl.close();
 			log('error', `Error during initialization process: ${error.message}`);
@@ -465,7 +540,7 @@ function promptQuestion(rl, question) {
 }
 
 // Function to create the project structure
-function createProjectStructure(addAliases, dryRun) {
+function createProjectStructure(addAliases, dryRun, storeTasksInGit) {
 	const targetDir = process.cwd();
 	log('info', `Initializing project in ${targetDir}`);
 
@@ -513,8 +588,8 @@ function createProjectStructure(addAliases, dryRun) {
 		}
 	);
 
-	// Copy .gitignore
-	copyTemplateFile('gitignore', path.join(targetDir, '.gitignore'));
+	// Copy .gitignore with dynamic tasks lines
+	copyTemplateFile('gitignore', path.join(targetDir, '.gitignore'), {}, storeTasksInGit);
 
 	// Copy dev_workflow.mdc
 	copyTemplateFile(
