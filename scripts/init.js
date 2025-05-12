@@ -492,7 +492,7 @@ async function initializeProject(options = {}) {
 			);
 			const addAliasesPrompted = addAliasesInput.trim().toLowerCase() !== 'n';
 
-			// Prompt for storeTasksInGit at the end if not provided
+			// Prompt for storeTasksInGit if not provided
 			if (typeof resolvedStoreTasksInGit === 'undefined') {
 				const storeTasksAnswer = await promptQuestion(
 					rl,
@@ -507,7 +507,7 @@ async function initializeProject(options = {}) {
 			console.log('\nTask Master Project settings:');
 			console.log(
 				chalk.blue(
-					'Add shell aliases (so you can use "tm" instead of "task-master"): '
+					'Add shell aliases (so you can use "tm" instead of "task-master"):'
 				),
 				chalk.white(addAliasesPrompted ? 'Yes' : 'No')
 			);
