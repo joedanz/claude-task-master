@@ -512,7 +512,7 @@ async function initializeProject(options = {}) {
 				chalk.white(addAliasesPrompted ? 'Yes' : 'No')
 			);
 			console.log(
-				chalk.blue('Store tasks.json/tasks/ in Git: '),
+				chalk.blue('Store tasks.json and task files in Git: '),
 				chalk.white(resolvedStoreTasksInGit ? 'Yes' : 'No')
 			);
 
