@@ -73,6 +73,7 @@ import {
 	getApiKeyStatusReport
 } from './task-manager/models.js';
 import { findProjectRoot } from './utils.js';
+import { generateTaskGraph } from './task-manager/task-graph.js';
 
 /**
  * Runs the interactive setup process for model configuration.
@@ -2103,6 +2104,65 @@ function registerCommands(programInstance) {
 				console.error(
 					chalk.red(`Error during initialization: ${error.message}`)
 				);
+				process.exit(1);
+			}
+		});
+
+	// task-graph command
+	programInstance
+		.command('task-graph')
+		.description('Generate a Mermaid diagram of the task dependency graph')
+		.option(
+			'-i, --input <file>',
+			'Path to tasks.json (default: tasks/tasks.json)'
+		)
+		.option(
+			'-o, --output <file>',
+			'Output file path (default: tasks/taskgraph.md)'
+		)
+		.option(
+			'-s, --status <status>',
+			'Only include tasks/subtasks with this status'
+		)
+		.option('--id <ids>', 'Comma-separated list of task/subtask IDs to include')
+		.action(async (options) => {
+			try {
+				if (options.output) {
+					// Only generate the user-specified output, with subtasks (backward compatible)
+					await generateTaskGraph({
+						input: options.input,
+						output: options.output,
+						status: options.status,
+						id: options.id,
+						subtasks: true
+					});
+					console.log(
+						chalk.green(`Task dependency graph generated at ${options.output}`)
+					);
+				} else {
+					// Always generate both files by default
+					await generateTaskGraph({
+						input: options.input,
+						output: 'tasks/taskgraph.md',
+						status: options.status,
+						id: options.id,
+						subtasks: false
+					});
+					await generateTaskGraph({
+						input: options.input,
+						output: 'tasks/taskgraph-subtasks.md',
+						status: options.status,
+						id: options.id,
+						subtasks: true
+					});
+					console.log(
+						chalk.green(
+							'Task dependency graphs generated: tasks/taskgraph.md (top-level only), tasks/taskgraph-subtasks.md (with subtasks)'
+						)
+					);
+				}
+			} catch (err) {
+				console.error(chalk.red('Error generating task graph:'), err.message);
 				process.exit(1);
 			}
 		});
