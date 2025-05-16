@@ -13,8 +13,7 @@
  * For the full license text, see the LICENSE file in the root directory.
  */
 
-const fs = require('fs');
-const updateGitignore = require('../src/utils/updateGitignore');
+import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
@@ -23,6 +22,7 @@ import chalk from 'chalk';
 import figlet from 'figlet';
 import boxen from 'boxen';
 import gradient from 'gradient-string';
+import updateGitignore from '../src/utils/updateGitignore.js';
 import { isSilentMode } from './modules/utils.js';
 import { convertAllCursorRulesToRooRules } from './modules/rule-transformer.js';
 import { execSync } from 'child_process';

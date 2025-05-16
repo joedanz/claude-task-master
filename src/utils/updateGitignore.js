@@ -1,6 +1,6 @@
 // Utility to update .gitignore according to user preference for storing task files in git
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Updates the .gitignore file at targetPath based on the provided content and storeTasksInGit flag.
@@ -65,4 +65,4 @@ function updateGitignore(targetPath, content, storeTasksInGit, log) {
   }
 }
 
-module.exports = updateGitignore;
+export default updateGitignore;
