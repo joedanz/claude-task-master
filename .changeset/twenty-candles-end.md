@@ -9,7 +9,7 @@ This release introduces a robust, user-friendly mechanism for controlling whethe
 #### Highlights
 
 - **New CLI Flags:**
-  - `--git-tasks` / `--no-git-tasks` for the `init` command allow users to explicitly choose whether to store `tasks.json` and `tasks/` in Git, supporting both automation and scripting.
+  - `--git-tasks <bool>` for the `init` command allow users to explicitly choose whether to store `tasks.json` and `tasks/` in Git, supporting both automation and scripting.
   - These flags override the interactive prompt, enabling seamless CI/CD or non-interactive usage.
 
 - **Improved Interactive Flow:**
@@ -20,13 +20,6 @@ This release introduces a robust, user-friendly mechanism for controlling whethe
   - The `.gitignore` is updated non-destructively: existing entries are preserved, and only the relevant lines for `tasks.json` and `tasks/` are commented/uncommented based on user choice.
   - The section header `# Task files` is always included above these lines for clarity and consistency, but never duplicated.
 
-- **Code Quality and Maintenance:**
-  - CLI argument handling is concise and robust, supporting both interactive and automated workflows.
-  - Error handling and code comments have been improved for maintainability.
-
 #### Usage Example
-- Store in Git: `task-master init --git-tasks`
-- Ignore in Git: `task-master init --no-git-tasks`
-- Interactive: Run `task-master init` and answer the prompt at the end.
-
-This change greatly improves the flexibility and professionalism of project initialization, and ensures that user preferences for Git storage are always respected and clearly reflected in `.gitignore`.
+- Store in Git (default): `task-master init` or `task-master init --git-tasks=true`
+- Ignore in Git: `task-master init --git-tasks=false`
