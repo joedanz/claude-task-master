@@ -405,7 +405,7 @@ async function initializeProject(options = {}) {
 		}
 
 		// Determine storeTasksInGit: use CLI option if provided, otherwise prompt
-		let resolvedStoreTasksInGit = options.storeTasksInGit;
+		resolvedStoreTasksInGit = options.storeTasksInGit;
 		if (typeof resolvedStoreTasksInGit === 'undefined') {
 			const rl = readline.createInterface({
 				input: process.stdin,

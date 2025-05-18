@@ -2108,7 +2108,7 @@ function registerCommands(programInstance) {
 		.option('--skip-install', 'Skip installing dependencies')
 		.option('--dry-run', 'Show what would be done without making changes')
 		.option('--aliases', 'Add shell aliases (tm, taskmaster)')
-		.option('--git-tasks <bool>', 'Store tasks.json and task files in Git (default: true; pass --git-tasks=false to disable)')
+		.option('--git-tasks <bool>', 'Store tasks.json and task files in Git (no default; user will be prompted if not specified)')
 
 		.action(async (cmdOptions) => {
 			// cmdOptions contains parsed arguments
@@ -2123,8 +2123,6 @@ function registerCommands(programInstance) {
 					const val = String(cmdOptions.gitTasks).toLowerCase();
 					if (val === 'false') cmdOptions.storeTasksInGit = false;
 					else cmdOptions.storeTasksInGit = true;
-				} else {
-					cmdOptions.storeTasksInGit = true;
 				}
 				await initializeProject(cmdOptions);
 				// initializeProject handles its own flow, including potential process.exit()
