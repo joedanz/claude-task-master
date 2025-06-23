@@ -9,6 +9,7 @@ import boxen from 'boxen';
 import ora from 'ora';
 import Table from 'cli-table3';
 import gradient from 'gradient-string';
+import { getTerminalCapabilities } from './utils/terminal-utils.js';
 import {
 	log,
 	findTaskById,
@@ -30,9 +31,17 @@ import {
 } from '../../src/constants/paths.js';
 import { getTaskMasterVersion } from '../../src/utils/getVersion.js';
 
+// Detect terminal capabilities
+const terminal = getTerminalCapabilities();
+
 // Create a color gradient for the banner
-const coolGradient = gradient(['#00b4d8', '#0077b6', '#03045e']);
-const warmGradient = gradient(['#fb8b24', '#e36414', '#9a031e']);
+const coolGradient = terminal.isColorSupported 
+    ? gradient(['#00b4d8', '#0077b6', '#03045e']) 
+    : (text) => text;
+
+const warmGradient = terminal.isColorSupported 
+    ? gradient(['#fb8b24', '#e36414', '#9a031e'])
+    : (text) => text;
 
 /**
  * Display FYI notice about tagged task lists (only if migration occurred)
