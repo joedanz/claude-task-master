@@ -525,7 +525,11 @@ function migrateConfigJson(configPath) {
 		}
 
 		if (modified) {
-			fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+			fs.writeFileSync(
+				configPath,
+				JSON.stringify(config, null, 2) + '\n',
+				'utf8'
+			);
 			if (process.env.TASKMASTER_DEBUG === 'true') {
 				console.log(
 					'[DEBUG] Updated config.json with tagged task system settings'

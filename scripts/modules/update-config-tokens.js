@@ -48,7 +48,7 @@ export function updateConfigMaxTokens(configPath) {
 		}
 
 		// Write back the updated config
-		fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+		fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 		return true;
 	} catch (error) {
 		console.error('Error updating config maxTokens:', error.message);

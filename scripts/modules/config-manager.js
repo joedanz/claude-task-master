@@ -723,7 +723,7 @@ function writeConfig(config, explicitRoot = null) {
 			fs.mkdirSync(taskmasterDir, { recursive: true });
 		}
 
-		fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+		fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 		loadedConfig = config; // Update the cache after successful write
 		return true;
 	} catch (error) {
