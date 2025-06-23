@@ -44,6 +44,65 @@ const warmGradient = terminal.isColorSupported
     : (text) => text;
 
 /**
+ * Checks if the current terminal environment supports Ink-based UI
+ * 
+ * @returns {boolean} True if Ink UI is supported
+ */
+function supportsInk() {
+	try {
+		// Check if we're in a TTY (interactive terminal)
+		if (!process.stdout.isTTY) {
+			return false;
+		}
+
+		// Check for CI environments where Ink UI should be disabled
+		if (process.env.CI || process.env.CONTINUOUS_INTEGRATION) {
+			return false;
+		}
+
+		// Check if terminal supports colors
+		if (!supportsColor()) {
+			return false;
+		}
+
+		// Check if React and Ink dependencies are available
+		try {
+			require.resolve('react');
+			require.resolve('ink');
+			return true;
+		} catch (error) {
+			return false;
+		}
+	} catch (error) {
+		return false;
+	}
+}
+
+/**
+ * Checks if the terminal supports colors
+ * 
+ * @returns {boolean} True if colors are supported
+ */
+function supportsColor() {
+	// Check common color support indicators
+	if (process.env.FORCE_COLOR) {
+		return true;
+	}
+
+	if (process.env.NO_COLOR || process.env.NODE_DISABLE_COLORS) {
+		return false;
+	}
+
+	// Check TERM environment variable
+	const term = process.env.TERM;
+	if (term && (term.includes('color') || term.includes('256') || term === 'xterm-256color')) {
+		return true;
+	}
+
+	return false;
+}
+
+/**
  * Display FYI notice about tagged task lists (only if migration occurred)
  * @param {Object} data - Data object that may contain _migrationHappened flag
  */
@@ -2754,5 +2813,6 @@ export {
 	warnLoadingIndicator,
 	infoLoadingIndicator,
 	displayContextAnalysis,
-	displayCurrentTagIndicator
+	displayCurrentTagIndicator,
+	supportsInk
 };

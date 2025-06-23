@@ -3347,6 +3347,7 @@ ${result.result}
 		.option('--no-git', 'Skip Git repository initialization')
 		.option('--git-tasks', 'Store tasks in Git')
 		.option('--no-git-tasks', 'No Git storage of tasks')
+		.option('--classic', 'Use classic initialization flow (disable enhanced UI)')
 		.action(async (cmdOptions) => {
 			// cmdOptions contains parsed arguments
 			// Parse rules: accept space or comma separated, default to all available rules

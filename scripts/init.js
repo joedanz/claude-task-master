@@ -31,6 +31,8 @@ import {
 	getRulesProfile
 } from '../src/utils/rule-transformer.js';
 import { updateConfigMaxTokens } from './modules/update-config-tokens.js';
+import { supportsInk } from './modules/ui.js';
+import InkAdapter from './modules/onboarding/InkAdapter.js';
 
 import { execSync } from 'child_process';
 import {
@@ -309,6 +311,27 @@ function copyTemplateFile(templateName, targetPath, replacements = {}) {
 
 // Main function to initialize a new project
 async function initializeProject(options = {}) {
+	// Flow routing: Check if enhanced Ink UI should be used
+	try {
+		if (supportsInk() && !options.classic) {
+			// Route to enhanced Ink UI flow
+			log('info', 'Using enhanced initialization flow with Ink UI');
+			const result = await InkAdapter.runEnhancedInit(options);
+			return InkAdapter.convertToLegacyFormat(result);
+		}
+		
+		// Log why we're using classic flow (for debugging)
+		if (options.classic) {
+			log('info', 'Using classic initialization flow (--classic flag specified)');
+		} else if (!supportsInk()) {
+			log('info', 'Using classic initialization flow (enhanced UI not supported)');
+		}
+	} catch (error) {
+		// If enhanced flow fails, fall back to classic flow
+		log('warn', `Enhanced flow failed, falling back to classic flow: ${error.message}`);
+	}
+
+	// Continue with classic flow
 	// Receives options as argument
 	// Only display banner if not in silent mode
 	if (!isSilentMode()) {
