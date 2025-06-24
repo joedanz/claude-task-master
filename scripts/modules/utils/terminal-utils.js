@@ -10,7 +10,7 @@ import process from 'process';
 import chalk from 'chalk';
 import supportsColor from 'supports-color';
 import gradient from 'gradient-string';
-import Conf from 'conf';
+// Removed Conf dependency - using simple in-memory config instead
 
 /**
  * Detects the color support level of the terminal
@@ -319,16 +319,11 @@ function refreshTerminalCapabilities() {
     return getTerminalCapabilities();
 }
 
-// Configuration for Ink UI preferences
-const config = new Conf({
-    projectName: 'task-master',
-    defaults: {
-        inkUI: {
-            enabled: true,  // Enable by default if supported
-            force: false   // Force enable even if not fully supported
-        }
-    }
-});
+// Simple in-memory configuration for UI preferences (replaces Conf dependency)
+const uiConfig = {
+    enabled: true,  // Enable by default if supported
+    force: false   // Force enable even if not fully supported
+};
 
 /**
  * Checks if the current terminal supports Ink UI
@@ -344,10 +339,10 @@ function supportsInk() {
                               caps.isUnicodeSupported;
     
     // Check if user has forced Ink UI
-    const userForced = config.get('inkUI.force', false);
+    const userForced = uiConfig.force;
     
     // Check if user has explicitly disabled Ink UI
-    const userDisabled = config.get('inkUI.enabled', true) === false;
+    const userDisabled = !uiConfig.enabled;
     
     // Determine if Ink is supported
     const isSupported = userForced || (hasBasicRequirements && !userDisabled);
@@ -380,12 +375,12 @@ function useInkUI(enabled, { force = false } = {}) {
     
     // Toggle if no specific value provided
     if (enabled === undefined) {
-        enabled = !config.get('inkUI.enabled', true);
+        enabled = !uiConfig.enabled;
     }
     
     // Update configuration
-    config.set('inkUI.enabled', enabled);
-    config.set('inkUI.force', force);
+    uiConfig.enabled = enabled;
+    uiConfig.force = force;
     
     // Get new status
     const newStatus = supportsInk();
@@ -404,8 +399,8 @@ function useInkUI(enabled, { force = false } = {}) {
  */
 function getInkUIConfig() {
     return {
-        enabled: config.get('inkUI.enabled', true),
-        force: config.get('inkUI.force', false)
+        enabled: uiConfig.enabled,
+        force: uiConfig.force
     };
 }
 

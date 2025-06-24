@@ -143,6 +143,12 @@ class InkAdapter {
    * @returns {boolean} True if Ink UI is supported
    */
   static _supportsInkUI() {
+    // TEMPORARY: Disable enhanced Ink UI flow until components are properly implemented
+    // The original Ink components were removed due to JSX syntax errors in Node.js
+    // This forces the classic flow to be used for now
+    return false;
+    
+    /* Original implementation - restore when Ink components are fixed:
     try {
       // Check if we're in a TTY (interactive terminal)
       if (!process.stdout.isTTY) {
@@ -170,6 +176,7 @@ class InkAdapter {
     } catch (error) {
       return false;
     }
+    */
   }
 
   /**

@@ -145,7 +145,7 @@ import {
  * Runs the interactive setup process for model configuration.
  * @param {string|null} projectRoot - The resolved project root directory.
  */
-async function runInteractiveSetup(projectRoot) {
+export async function runInteractiveSetup(projectRoot) {
 	if (!projectRoot) {
 		console.error(
 			chalk.red(

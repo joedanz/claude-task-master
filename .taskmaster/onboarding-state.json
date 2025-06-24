@@ -1,0 +1,105 @@
+{
+  "version": "1.0.0",
+  "currentSection": 0,
+  "totalSections": 6,
+  "sections": {
+    "project-info": {
+      "completed": false,
+      "data": {}
+    },
+    "ai-provider": {
+      "completed": false,
+      "data": {}
+    },
+    "api-keys": {
+      "completed": false,
+      "data": {}
+    },
+    "features": {
+      "completed": false,
+      "data": {}
+    },
+    "rules": {
+      "completed": false,
+      "data": {}
+    },
+    "review-execute": {
+      "completed": false,
+      "data": {}
+    }
+  },
+  "executionPlan": [
+    {
+      "command": "rules",
+      "action": "add",
+      "profiles": [
+        "trae"
+      ],
+      "description": "Add rule profiles: trae"
+    },
+    {
+      "command": "rules",
+      "action": "add",
+      "profiles": [
+        "vscode"
+      ],
+      "description": "Add rule profiles: vscode"
+    },
+    {
+      "command": "rules",
+      "action": "add",
+      "profiles": [
+        "cline"
+      ],
+      "description": "Add rule profiles: cline"
+    }
+  ],
+  "completed": {
+    "projectInfo": true,
+    "aiProvider": true,
+    "apiKeys": true,
+    "features": false,
+    "rules": true,
+    "review": false,
+    "ai-provider": true
+  },
+  "answers": {
+    "projectInfo": {
+      "name": "test",
+      "description": "test",
+      "version": "0.1.0",
+      "author": "Joe"
+    },
+    "aiProvider": {
+      "setupMethod": "interactive",
+      "completed": true,
+      "timestamp": "2025-06-24T01:57:55.013Z",
+      "configured": true,
+      "completedAt": "2025-06-24T12:22:36.199Z"
+    },
+    "apiKeys": {
+      "configured": true,
+      "validated": false,
+      "keyValue": null,
+      "setupMethod": "instructions",
+      "completedAt": "2025-06-24T12:22:14.443Z"
+    },
+    "features": {
+      "dependencies": true,
+      "reporting": true,
+      "aiSuggestions": false,
+      "collaboration": false
+    },
+    "rules": {
+      "setupMethod": "interactive",
+      "profiles": [
+        "cline"
+      ],
+      "completed": true,
+      "timestamp": "2025-06-24T02:09:57.564Z"
+    }
+  },
+  "startedAt": "2025-06-24T02:01:39.510Z",
+  "lastUpdatedAt": "2025-06-24T12:23:07.992Z",
+  "completedAt": null
+}

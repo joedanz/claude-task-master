@@ -1,0 +1,173 @@
+{
+	"meta": {
+		"generatedAt": "2025-06-23T20:58:39.996Z",
+		"tasksAnalyzed": 20,
+		"totalTasks": 20,
+		"analysisCount": 20,
+		"thresholdScore": 5,
+		"projectName": "Taskmaster",
+		"usedResearch": false
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "Add Ink Dependencies and Terminal Detection",
+			"complexityScore": 4,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down the dependency installation and terminal detection implementation into separate subtasks focusing on package.json updates, terminal capability detection logic, and integration testing.",
+			"reasoning": "Moderate complexity involving dependency management and system detection. Well-defined scope with clear deliverables but requires careful terminal compatibility testing."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Create Onboarding Module Structure",
+			"complexityScore": 3,
+			"recommendedSubtasks": 2,
+			"expansionPrompt": "Split into directory structure creation and base component setup, ensuring proper module exports and integration patterns.",
+			"reasoning": "Low-medium complexity focused on file system organization and basic scaffolding. Straightforward implementation with clear structure requirements."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "Implement InkAdapter Bridge Layer",
+			"complexityScore": 6,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Divide into adapter class creation, flow routing logic, CLI flag handling, and backward compatibility testing to ensure seamless integration.",
+			"reasoning": "Medium-high complexity requiring careful abstraction design and backward compatibility. Critical integration point that affects existing functionality."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "Modify init.js for Flow Routing",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break into routing logic implementation, CLI flag support addition, and comprehensive backward compatibility testing.",
+			"reasoning": "Medium complexity involving modification of core initialization logic. Requires careful testing to ensure existing functionality remains intact."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "Create Base Ink Component Library",
+			"complexityScore": 7,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Split into individual component creation (BaseComponent, LoadingSpinner, ProgressBar, InputField, SelectList, InfoBox) and theme management system implementation.",
+			"reasoning": "Medium-high complexity involving multiple UI components with consistent theming. Requires good React/Ink knowledge and design system thinking."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "Implement OnboardingOrchestrator",
+			"complexityScore": 8,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Divide into orchestrator class structure, step management system, navigation logic, error handling, and integration with existing project initialization.",
+			"reasoning": "High complexity as the central coordinator managing the entire onboarding flow. Requires sophisticated state management and error handling."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "Create State Management System",
+			"complexityScore": 6,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break into persistent storage implementation, session management, resume functionality, and cleanup mechanisms.",
+			"reasoning": "Medium-high complexity involving persistent state management and session handling. Requires careful consideration of edge cases and cleanup."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "Build Environment Detection Services",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split into environment scanner, project analyzer, IDE detector, and smart defaults integration components.",
+			"reasoning": "Medium-high complexity requiring cross-platform compatibility and intelligent analysis of various system configurations."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "Create Welcome Component with Environment Detection",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Divide into welcome screen UI, environment information display, and animation implementation.",
+			"reasoning": "Medium complexity focusing on UI presentation and animation. Requires good understanding of terminal rendering and visual effects."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "Implement Enhanced Project Configuration Component",
+			"complexityScore": 6,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break into form component creation, real-time validation system, smart defaults integration, and configuration preview functionality.",
+			"reasoning": "Medium-high complexity involving interactive forms with real-time feedback and validation. Requires careful UX design and state management."
+		},
+		{
+			"taskId": 11,
+			"taskTitle": "Build Enhanced Model Selection Interface",
+			"complexityScore": 6,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split into model comparison table, cost calculator, filtering/search functionality, and existing model data integration.",
+			"reasoning": "Medium-high complexity requiring data presentation, calculations, and interactive filtering. Needs integration with existing model system."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "Implement API Key Setup with Live Validation",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Divide into secure input component, API validation system, connection testing, and multiple input method support.",
+			"reasoning": "Medium-high complexity involving security considerations, external API integration, and real-time validation. Requires careful error handling."
+		},
+		{
+			"taskId": 13,
+			"taskTitle": "Create Live Demo System",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break into demo component creation, task preview system, and integration with existing task generation logic.",
+			"reasoning": "Medium-high complexity requiring integration with existing systems and real-time demonstration capabilities."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "Build Workflow Customization Interface",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split into workflow builder UI, rules system integration, template system, and preview functionality implementation.",
+			"reasoning": "Medium-high complexity involving complex UI for rule customization and integration with existing workflow systems."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "Implement Quick Setup Mode",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Divide into quick flag implementation, streamlined flow creation, and smart defaults optimization.",
+			"reasoning": "Medium complexity focused on creating an optimized, automated flow. Requires careful selection of defaults and minimal user interaction."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "Create Completion Component with Next Steps",
+			"complexityScore": 4,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break into completion screen UI, setup summary generation, and next steps recommendation system.",
+			"reasoning": "Moderate complexity focusing on summary presentation and user guidance. Relatively straightforward UI implementation."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "Add Visual Polish and Animations",
+			"complexityScore": 5,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split into transition animations, visual effects implementation, keyboard shortcuts, and performance optimization.",
+			"reasoning": "Medium complexity focused on enhancing user experience through animations and visual feedback. Requires terminal compatibility considerations."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "Implement Comprehensive Error Handling",
+			"complexityScore": 6,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Divide into error handling enhancement, recovery mechanisms, user-friendly messaging, and fallback system implementation.",
+			"reasoning": "Medium-high complexity requiring systematic error handling across all components. Critical for system reliability and user experience."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "Create Comprehensive Test Suite",
+			"complexityScore": 8,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break into unit testing, integration testing, terminal compatibility testing, performance benchmarking, and regression testing.",
+			"reasoning": "High complexity requiring comprehensive testing strategy across multiple dimensions. Critical for ensuring system reliability and compatibility."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "Documentation and Migration Guide",
+			"complexityScore": 4,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split into user documentation, developer documentation, migration guide creation, and tutorial/example development.",
+			"reasoning": "Moderate complexity focused on comprehensive documentation creation. Important for user adoption but relatively straightforward implementation."
+		}
+	]
+}

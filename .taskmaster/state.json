@@ -1,9 +1,9 @@
 {
-	"currentTag": "master",
-	"lastSwitched": "2025-06-14T20:37:15.456Z",
-	"branchTagMapping": {
-		"v017-adds": "v017-adds",
-		"next": "next"
-	},
-	"migrationNoticeShown": true
+  "currentTag": "onboarding",
+  "lastSwitched": "2025-06-23T20:54:21.044Z",
+  "branchTagMapping": {
+    "v017-adds": "v017-adds",
+    "next": "next"
+  },
+  "migrationNoticeShown": true
 }
