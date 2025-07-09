@@ -266,6 +266,26 @@ function findCycles(subtaskId, dependencyMap, visited = new Set(), recursionStac
 }
 
 /**
+ * Formats a timestamp into a human-readable string (YYYY-MM-DD HH:mm:ss).
+ * @param {string|number|Date} timestamp - The timestamp to format.
+ * @returns {string} The formatted timestamp or empty string if invalid.
+ */
+function formatTimestamp(timestamp) {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  if (isNaN(date.getTime())) {
+    return '';
+  }
+  const pad = (num) => String(num).padStart(2, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+/**
  * Convert a string from camelCase to kebab-case
  * @param {string} str - The string to convert
  * @returns {string} The kebab-case version of the string
@@ -336,6 +356,7 @@ export {
   findTaskById,
   truncate,
   findCycles,
+  formatTimestamp,
   toKebabCase,
   detectCamelCaseFlags
 }; 

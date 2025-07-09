@@ -19,6 +19,7 @@ import {
   taskExists, 
   formatTaskId, 
   findCycles,
+  formatTimestamp,
   CONFIG,
   LOG_LEVELS,
   findTaskById,
@@ -430,6 +431,27 @@ describe('Utils Module', () => {
       expect(formatTaskId(null)).toBe(null);
       expect(formatTaskId(undefined)).toBe(undefined);
       expect(formatTaskId('')).toBe('');
+    });
+  });
+
+  describe('formatTimestamp function', () => {
+    test('should format ISO string timestamp correctly', () => {
+      const timestamp = '2021-01-02T03:04:05Z';
+      expect(formatTimestamp(timestamp)).toBe('2021-01-02 03:04:05');
+    });
+
+    test('should handle Date object', () => {
+      const date = new Date(Date.UTC(2020, 0, 1, 12, 30, 45));
+      expect(formatTimestamp(date)).toBe('2020-01-01 12:30:45');
+    });
+
+    test('should handle numeric timestamp', () => {
+      const timestampNum = Date.UTC(2021, 5, 15, 8, 9, 10);
+      expect(formatTimestamp(timestampNum)).toBe('2021-06-15 08:09:10');
+    });
+
+    test('should return empty string for invalid date', () => {
+      expect(formatTimestamp('invalid')).toBe('');
     });
   });
 
